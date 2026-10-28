@@ -1,69 +1,148 @@
-import Image from "next/image";
+"use client";
+
+import { motion } from "framer-motion";
+import Link from "next/link";
+import { useRef, useState } from "react";
+import SiteNav from "./components/SiteNav";
 
 export default function Home() {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const [soundEnabled, setSoundEnabled] = useState(false);
+
+  const toggleSound = async () => {
+    const video = videoRef.current;
+    if (!video) {
+      return;
+    }
+
+    const nextSoundState = video.muted;
+    video.muted = !nextSoundState;
+    setSoundEnabled(nextSoundState);
+
+    if (video.paused) {
+      await video.play();
+    }
+  };
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert h-5 w-[100px]"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the{" "}
-            <code className="rounded bg-black/[.06] px-1.5 py-0.5 font-mono text-[0.9em] dark:bg-white/[.08]">
-              page.tsx
-            </code>{" "}
-            file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
+    <main className="min-h-screen bg-[#dfeaf0] text-slate-800">
+      <SiteNav />
+
+      <section id="home" className="relative overflow-hidden bg-[#dfeaf0]">
+        <div className="absolute inset-x-0 top-0 z-0 h-[760px] bg-[#dfeaf0]" />
+
+        <div className="absolute inset-x-0 top-0 z-0 overflow-hidden">
+          <div
+            className="absolute left-[-40px] top-[-60px] text-[420px] font-black text-slate-50/80 tracking-[-0.12em]"
+            style={{ letterSpacing: "-0.12em" }}
           >
-            <Image
-              className="dark:invert h-[14px] w-4"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={14}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+            FLOOD
+          </div>
         </div>
-      </main>
-    </div>
+
+        <div className="relative z-10 mx-auto max-w-[1280px] px-6 pb-10 pt-8">
+          <div className="grid min-h-[760px] grid-cols-[0.9fr_1.5fr] items-center gap-8">
+            <motion.div
+              initial={{ opacity: 0, x: -20 }}
+              animate={{ opacity: 1, x: 0 }}
+              transition={{ duration: 0.6, ease: "easeOut" }}
+              className="relative z-10 pt-10"
+            >
+              <h1 className="text-[62px] font-semibold leading-[0.9] tracking-[-0.07em] text-slate-800">
+                SIGAB
+              </h1>
+              <p className="mt-5 max-w-[420px] text-[16px] leading-8 text-slate-600">
+                Sistem Informasi Geografis Antisipasi Banjir membantu masyarakat memahami kondisi wilayah rawan, memantau potensi bahaya, dan mempersiapkan tindakan cepat sebelum situasi memburuk.
+              </p>
+
+              <div className="mt-8 flex gap-4">
+                <Link href="/peta-risiko" className="rounded-full bg-[#0d3b54] px-6 py-3 text-sm font-semibold text-white shadow-[0_14px_24px_rgba(13,59,84,0.18)] transition hover:bg-[#123d61]">
+                  Lihat data banjir
+                </Link>
+                <Link href="/mitigasi" className="rounded-full border border-slate-300 bg-white/70 px-6 py-3 text-sm font-semibold text-slate-700 transition hover:bg-white">
+                  Pelajari lebih lanjut
+                </Link>
+              </div>
+            </motion.div>
+
+            <motion.div
+              initial={{ opacity: 0, scale: 0.96 }}
+              animate={{ opacity: 1, scale: 1 }}
+              transition={{ duration: 0.7, ease: "easeOut" }}
+              className="relative z-10 flex justify-center"
+            >
+              <div className="relative w-full max-w-[770px]">
+                <div className="absolute inset-x-12 top-8 h-[84%] rounded-[30px] bg-white/15 blur-3xl" />
+
+                <div className="relative h-[590px] overflow-hidden rounded-[28px] border border-white/10 shadow-[0_35px_80px_rgba(9,35,52,0.2)]">
+                  <video
+                    ref={videoRef}
+                    className="absolute inset-0 h-full w-full object-cover"
+                    src="/video.mp4"
+                    poster="/banjir.jpg"
+                    autoPlay
+                    muted
+                    loop
+                    playsInline
+                    preload="metadata"
+                    aria-label="Video pengenalan kondisi banjir"
+                  />
+                  <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,_rgba(29,74,92,0.12),rgba(14,34,52,0.62))]" />
+
+                  <div className="absolute bottom-5 left-5 right-5 z-10 flex items-end justify-between gap-4">
+                    <div className="max-w-xs rounded-2xl border border-white/20 bg-slate-950/45 px-4 py-3 text-white backdrop-blur-md">
+                      <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#82d4d0]">
+                        Video kondisi banjir
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={toggleSound}
+                      className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-[#f38a50] text-slate-900 shadow-lg transition hover:bg-[#ff9d67]"
+                      aria-label={soundEnabled ? "Matikan suara video" : "Nyalakan suara video"}
+                      title={soundEnabled ? "Matikan suara" : "Nyalakan suara"}
+                    >
+                      {soundEnabled ? (
+                        <svg viewBox="0 0 24 24" className="h-6 w-6 overflow-visible" aria-hidden="true">
+                          <path
+                            d="M4 10v4h3l5 4V6l-5 4H4Z"
+                            fill="currentColor"
+                            stroke="currentColor"
+                            strokeLinejoin="round"
+                          />
+                          <path
+                            d="M16 9.5a4 4 0 0 1 0 5M18.5 7a7.5 7.5 0 0 1 0 10"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeLinecap="round"
+                            strokeWidth="1.8"
+                          />
+                        </svg>
+                      ) : (
+                        <svg viewBox="0 0 24 24" className="h-6 w-6 overflow-visible" aria-hidden="true">
+                          <path
+                            d="M4 10v4h3l5 4V6l-5 4H4Z"
+                            fill="currentColor"
+                            stroke="currentColor"
+                            strokeLinejoin="round"
+                          />
+                          <path
+                            d="m16 9 5 6m0-6-5 6"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeLinecap="round"
+                            strokeWidth="2"
+                          />
+                        </svg>
+                      )}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        </div>
+      </section>
+    </main>
   );
 }
