@@ -1,4 +1,5 @@
 import SiteNav from "./SiteNav";
+import SiteFooter from "./SiteFooter";
 
 type PageShellProps = {
   eyebrow: string;
@@ -19,6 +20,7 @@ export default function PageShell({ eyebrow, title, description, children }: Pag
         </div>
       </section>
       <section className="mx-auto max-w-[1100px] px-6 py-12">{children}</section>
+      <SiteFooter />
     </main>
   );
 }
