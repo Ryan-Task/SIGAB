@@ -1,9 +1,514 @@
-import React from 'react'
+"use client";
 
-function page() {
-  return (
-    <div>page</div>
-  )
+import { motion } from "framer-motion";
+import Link from "next/link";
+import { useEffect, useState } from "react";
+import SiteNav from "../components/SiteNav";
+import type { MapZone } from "./RiskMap";
+import dynamic from "next/dynamic";
+
+const RiskMap = dynamic(() => import("./RiskMap"), { ssr: false });
+
+type RiskLevel = "Tinggi" | "Sedang" | "Rendah";
+
+type RiskPrediction = {
+  slug: string;
+  name: string;
+  regency_code: string;
+  regency_name: string;
+  centroid_lat: number;
+  centroid_lng: number;
+  score: number;
+  risk_level: "high" | "medium" | "low";
+  status: "valid";
+  explanation: { caveat: string };
+  weather: {
+    description: string;
+    rainfall_mm: number;
+    temperature_c: number;
+    humidity_percent: number;
+  };
+};
+
+type RiskArea = RiskPrediction & { detail: string; level: RiskLevel; tone: string };
+const ZONE_RADIUS_METERS = 1000;
+
+const riskColors: Record<RiskLevel, string> = {
+  Tinggi: "bg-[#f38a50] text-[#123d61]",
+  Sedang: "bg-[#82d4d0] text-[#123d61]",
+  Rendah: "bg-[#26669a] text-white",
+};
+
+/* ------------------------------------------------------------------ */
+/* DATA STATIK (pengganti getLatestPredictions dari backend)           */
+/* Edit/tambah data di bawah ini sesuai kebutuhan.                     */
+/* ------------------------------------------------------------------ */
+type StaticArea = {
+  slug: string;
+  name: string;
+  regency_code: string;
+  regency_name: string;
+  lat: number;
+  lng: number;
+  score: number;
+  risk_level: "high" | "medium" | "low";
+  description: string;
+  rainfall_mm: number;
+  temperature_c: number;
+  humidity_percent: number;
+};
+
+const STATIC_AREAS: StaticArea[] = [
+  { slug: "porong", name: "Porong", regency_code: "35.15", regency_name: "Kabupaten Sidoarjo", lat: -7.5436, lng: 112.6852, score: 86, risk_level: "high", description: "Hujan lebat", rainfall_mm: 42, temperature_c: 27, humidity_percent: 88 },
+  { slug: "tanggulangin", name: "Tanggulangin", regency_code: "35.15", regency_name: "Kabupaten Sidoarjo", lat: -7.5122, lng: 112.6945, score: 78, risk_level: "high", description: "Hujan sedang hingga lebat", rainfall_mm: 35, temperature_c: 28, humidity_percent: 85 },
+  { slug: "candi", name: "Candi", regency_code: "35.15", regency_name: "Kabupaten Sidoarjo", lat: -7.4960, lng: 112.7142, score: 64, risk_level: "medium", description: "Hujan sedang", rainfall_mm: 22, temperature_c: 29, humidity_percent: 80 },
+  { slug: "sidoarjo-kota", name: "Sidoarjo Kota", regency_code: "35.15", regency_name: "Kabupaten Sidoarjo", lat: -7.4478, lng: 112.7183, score: 58, risk_level: "medium", description: "Berawan", rainfall_mm: 15, temperature_c: 30, humidity_percent: 78 },
+  { slug: "waru", name: "Waru", regency_code: "35.15", regency_name: "Kabupaten Sidoarjo", lat: -7.3496, lng: 112.7280, score: 49, risk_level: "medium", description: "Hujan ringan", rainfall_mm: 10, temperature_c: 30, humidity_percent: 76 },
+  { slug: "taman", name: "Taman", regency_code: "35.15", regency_name: "Kabupaten Sidoarjo", lat: -7.3850, lng: 112.6900, score: 32, risk_level: "low", description: "Cerah berawan", rainfall_mm: 4, temperature_c: 31, humidity_percent: 70 },
+  { slug: "rungkut", name: "Rungkut", regency_code: "35.78", regency_name: "Kota Surabaya", lat: -7.3340, lng: 112.7770, score: 81, risk_level: "high", description: "Hujan lebat", rainfall_mm: 40, temperature_c: 28, humidity_percent: 87 },
+  { slug: "gunung-anyar", name: "Gunung Anyar", regency_code: "35.78", regency_name: "Kota Surabaya", lat: -7.3380, lng: 112.8000, score: 72, risk_level: "high", description: "Hujan sedang hingga lebat", rainfall_mm: 31, temperature_c: 28, humidity_percent: 84 },
+  { slug: "sukolilo", name: "Sukolilo", regency_code: "35.78", regency_name: "Kota Surabaya", lat: -7.2910, lng: 112.7900, score: 61, risk_level: "medium", description: "Hujan sedang", rainfall_mm: 20, temperature_c: 29, humidity_percent: 80 },
+  { slug: "wonokromo", name: "Wonokromo", regency_code: "35.78", regency_name: "Kota Surabaya", lat: -7.3010, lng: 112.7370, score: 55, risk_level: "medium", description: "Berawan", rainfall_mm: 14, temperature_c: 30, humidity_percent: 77 },
+  { slug: "tegalsari", name: "Tegalsari", regency_code: "35.78", regency_name: "Kota Surabaya", lat: -7.2750, lng: 112.7340, score: 38, risk_level: "low", description: "Cerah berawan", rainfall_mm: 6, temperature_c: 31, humidity_percent: 72 },
+  { slug: "genteng", name: "Genteng", regency_code: "35.78", regency_name: "Kota Surabaya", lat: -7.2570, lng: 112.7450, score: 27, risk_level: "low", description: "Cerah", rainfall_mm: 2, temperature_c: 32, humidity_percent: 68 },
+];
+
+function buildStaticPredictions(): RiskPrediction[] {
+  return STATIC_AREAS.map((item) => ({
+    slug: item.slug,
+    name: item.name,
+    regency_code: item.regency_code,
+    regency_name: item.regency_name,
+    centroid_lat: item.lat,
+    centroid_lng: item.lng,
+    score: item.score,
+    risk_level: item.risk_level,
+    status: "valid",
+    explanation: { caveat: "Data contoh statis, bukan prakiraan resmi." },
+    weather: {
+      description: item.description,
+      rainfall_mm: item.rainfall_mm,
+      temperature_c: item.temperature_c,
+      humidity_percent: item.humidity_percent,
+    },
+  }));
 }
 
-export default page
+function toRiskArea(prediction: RiskPrediction): RiskArea {
+  const level = prediction.risk_level === "high" ? "Tinggi" : prediction.risk_level === "medium" ? "Sedang" : "Rendah";
+  return {
+    ...prediction,
+    detail: prediction.status === "valid" ? "Estimasi berdasarkan data tersedia" : "Data belum cukup untuk kategori risiko",
+    level,
+    tone: level === "Tinggi" ? "#f38a50" : level === "Sedang" ? "#82d4d0" : "#26669a",
+  };
+}
+
+const INITIAL_AREAS: RiskArea[] = buildStaticPredictions().map(toRiskArea);
+
+function regencyLabel(area: Pick<RiskPrediction, "regency_code" | "regency_name">): string {
+  if (area.regency_code === "35.15") return "Kabupaten Sidoarjo";
+  if (area.regency_code === "35.78") return "Kota Surabaya";
+  return area.regency_name && !/^\d+(?:\.\d+)+$/.test(area.regency_name)
+    ? area.regency_name
+    : "Wilayah";
+}
+
+function distanceMeters(left: RiskArea, right: RiskArea): number {
+  if (!left.centroid_lat || !left.centroid_lng || !right.centroid_lat || !right.centroid_lng) return Number.POSITIVE_INFINITY;
+  const earthRadius = 6371000;
+  const lat1 = Number(left.centroid_lat) * Math.PI / 180;
+  const lat2 = Number(right.centroid_lat) * Math.PI / 180;
+  const deltaLat = lat2 - lat1;
+  const deltaLng = (Number(right.centroid_lng) - Number(left.centroid_lng)) * Math.PI / 180;
+  const value = Math.sin(deltaLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(deltaLng / 2) ** 2;
+  return earthRadius * 2 * Math.atan2(Math.sqrt(value), Math.sqrt(1 - value));
+}
+
+function createMapZones(areas: RiskArea[]): MapZone[] {
+  const positioned = areas.filter((area) => area.centroid_lat && area.centroid_lng);
+  const zones: RiskArea[][] = [];
+  for (const area of positioned) {
+    const zone = zones.find((candidate) => candidate.some((member) => distanceMeters(member, area) <= ZONE_RADIUS_METERS));
+    if (zone) zone.push(area);
+    else zones.push([area]);
+  }
+  return zones.map((members, index) => {
+    const representative = [...members].sort((left, right) => (right.score ?? -1) - (left.score ?? -1))[0];
+    return {
+      id: `zone-${index + 1}`,
+      areas: members,
+      representative,
+      latitude: members.reduce((sum, area) => sum + Number(area.centroid_lat), 0) / members.length,
+      longitude: members.reduce((sum, area) => sum + Number(area.centroid_lng), 0) / members.length,
+      radiusMeters: ZONE_RADIUS_METERS,
+    };
+  });
+}
+
+function getPaginationItems(currentPage: number, totalPages: number): Array<number | "ellipsis"> {
+  if (totalPages <= 7) return Array.from({ length: totalPages }, (_, index) => index + 1);
+
+  const pages = new Set([1, 2, totalPages - 1, totalPages, currentPage - 1, currentPage, currentPage + 1]);
+  const items: Array<number | "ellipsis"> = [];
+  let previousPage = 0;
+
+  for (const pageNumber of [...pages].sort((left, right) => left - right)) {
+    if (pageNumber < 1 || pageNumber > totalPages) continue;
+    if (pageNumber - previousPage > 1) items.push("ellipsis");
+    items.push(pageNumber);
+    previousPage = pageNumber;
+  }
+
+  return items;
+}
+
+function Footer() {
+  return (
+    <footer className="bg-[#123d61] px-6 py-12 text-white">
+      <div className="mx-auto grid max-w-[1180px] gap-10 md:grid-cols-[1.4fr_1fr_1fr]">
+        <div>
+          <div className="flex items-center gap-3">
+            <span className="flex h-10 w-10 items-center justify-center rounded-full bg-[#82d4d0] font-bold text-[#123d61]">S</span>
+            <span className="text-lg font-semibold tracking-[0.12em]">SIGAB</span>
+          </div>
+          <p className="mt-5 max-w-sm text-sm leading-7 text-sky-100/70">
+            Sistem Informasi Geografis Antisipasi Banjir untuk membantu masyarakat memahami risiko dan mempersiapkan tindakan.
+          </p>
+        </div>
+        <div>
+          <h3 className="text-sm font-semibold text-[#82d4d0]">Navigasi</h3>
+          <div className="mt-4 space-y-3 text-sm text-sky-100/75">
+            <Link href="/peta-risiko" className="block transition hover:text-white">Peta Risiko</Link>
+            <Link href="/peringatan" className="block transition hover:text-white">Peringatan</Link>
+            <Link href="/data-historis" className="block transition hover:text-white">Data Historis</Link>
+            <Link href="/mitigasi" className="block transition hover:text-white">Mitigasi</Link>
+          </div>
+        </div>
+        <div>
+          <h3 className="text-sm font-semibold text-[#82d4d0]">Catatan</h3>
+          <p className="mt-4 text-sm leading-7 text-sky-100/70">
+            Informasi SIGAB bersifat pendukung. Tetap ikuti arahan resmi BPBD, BMKG, dan instansi berwenang.
+          </p>
+        </div>
+      </div>
+      <div className="mx-auto mt-10 max-w-[1180px] border-t border-white/10 pt-5 text-xs text-sky-100/50">
+        © 2026 SIGAB. Dibuat untuk mendukung kesiapsiagaan masyarakat.
+      </div>
+    </footer>
+  );
+}
+
+export default function PetaRisikoPage() {
+  const [riskAreas] = useState<RiskArea[]>(INITIAL_AREAS);
+  const [selectedArea, setSelectedArea] = useState<RiskArea | null>(INITIAL_AREAS[0] ?? null);
+  const [filter, setFilter] = useState<"Semua" | RiskLevel>("Semua");
+  const [regency, setRegency] = useState("Semua");
+  const [selectedRegency, setSelectedRegency] = useState("Semua");
+  const [selectedAreaSearch, setSelectedAreaSearch] = useState("");
+  const [sort, setSort] = useState<"risk" | "name">("risk");
+  const [search, setSearch] = useState("");
+  const [pageSize, setPageSize] = useState<5 | 10 | 20>(5);
+  const [page, setPage] = useState(1);
+
+  useEffect(() => {
+    setPage(1);
+  }, [filter, regency, search, pageSize]);
+  const regencies = [...new Map(
+    riskAreas
+      .filter((area) => area.regency_code)
+      .map((area) => [area.regency_code as string, regencyLabel(area)] as const),
+  )].sort((left, right) => left[1].localeCompare(right[1], "id"));
+  const orderedAreas = [...riskAreas].sort((left, right) => {
+    const regencyComparison = (left.regency_name ?? "").localeCompare(right.regency_name ?? "", "id");
+    return regencyComparison || left.name.localeCompare(right.name, "id");
+  });
+  const selectedOptions = selectedRegency === "Semua"
+    ? []
+    : orderedAreas.filter((area) =>
+      area.regency_code === selectedRegency &&
+      area.name.toLowerCase().includes(selectedAreaSearch.toLowerCase()),
+    );
+  const visibleAreas = riskAreas.filter((area) =>
+    (filter === "Semua" || area.level === filter) &&
+    (regency === "Semua" || area.regency_code === regency) &&
+    area.name.toLowerCase().includes(search.toLowerCase()),
+  ).sort((left, right) => sort === "name"
+    ? left.name.localeCompare(right.name, "id")
+    : (right.score ?? -1) - (left.score ?? -1));
+  const totalPages = Math.max(1, Math.ceil(visibleAreas.length / pageSize));
+  const pagedAreas = visibleAreas.slice((page - 1) * pageSize, page * pageSize);
+  const selectedExactMatch = selectedOptions.some((area) => area.name.toLowerCase() === selectedAreaSearch.trim().toLowerCase());
+  const paginationItems = getPaginationItems(page, totalPages);
+  const mapZones = createMapZones(visibleAreas);
+  useEffect(() => {
+    setPage((currentPage) => Math.min(currentPage, totalPages));
+  }, [totalPages]);
+
+  return (
+    <main className="min-h-screen bg-[#dfeaf0] text-slate-800">
+      <SiteNav />
+
+      <section className="bg-[#dfeaf0] px-6 pb-12 pt-32">
+        <div className="mx-auto max-w-[1180px]">
+          <div className="flex flex-col justify-between gap-8 md:flex-row md:items-end">
+            <div className="max-w-3xl">
+              <p className="text-xs font-bold uppercase tracking-[0.22em] text-[#26669a]">Eksplorasi wilayah</p>
+              <h1 className="mt-4 text-5xl font-semibold leading-[0.95] tracking-[-0.08em] text-[#123d61] sm:text-7xl">
+                Peta risiko,<br />dibuat mudah dipahami.
+              </h1>
+              <p className="mt-6 max-w-xl text-base leading-8 text-slate-600">
+                Jelajahi gambaran risiko banjir per wilayah. Pilih area untuk melihat status, skor estimasi, dan faktor yang perlu diperhatikan.
+              </p>
+            </div>
+            <div className="flex items-center gap-3 text-sm text-slate-500">
+              <span className="h-2 w-2 animate-pulse rounded-full bg-[#f38a50]" />
+              Diperbarui hari ini
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="px-6 pb-24">
+        <div className="mx-auto grid max-w-[1180px] gap-6 lg:grid-cols-[1.45fr_0.75fr]">
+          <motion.div
+            initial={{ opacity: 0, y: 18 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.6 }}
+            className="relative min-h-[570px] overflow-hidden rounded-[34px] bg-[#26669a] p-6 shadow-[0_24px_60px_rgba(38,102,154,0.2)] sm:p-8"
+          >
+            <div className="absolute inset-0 opacity-20 [background-image:linear-gradient(rgba(255,255,255,.25)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,.25)_1px,transparent_1px)] [background-size:46px_46px]" />
+            <div className="absolute -right-20 top-28 h-80 w-80 rounded-full border-[34px] border-[#82d4d0]/25" />
+            <div className="absolute -bottom-28 left-24 h-96 w-96 rounded-full border-[42px] border-[#f38a50]/20" />
+            <div className="relative z-10 flex items-start justify-between gap-4 text-white">
+              <div>
+                <p className="text-xs font-bold uppercase tracking-[0.2em] text-[#82d4d0]">Peta interaktif</p>
+                <h2 className="mt-2 text-2xl font-semibold">Sidoarjo, Surabaya dan sekitarnya</h2>
+              </div>
+              <span className="rounded-full bg-[#f38a50] px-3 py-1.5 text-xs font-bold text-[#123d61]">Waspada</span>
+            </div>
+            <div className="relative z-10 mt-10 h-[375px]">
+              <RiskMap areas={mapZones} selectedArea={selectedArea} onSelect={setSelectedArea} />
+              <div className="absolute bottom-3 left-3 rounded-2xl border border-white/20 bg-[#123d61]/60 p-4 text-xs text-sky-100 backdrop-blur-md">
+                {mapZones.length} zona, radius 1 km. Geser peta, zoom, atau klik zona untuk melihat risiko
+              </div>
+            </div>
+            <div className="relative z-10 flex flex-wrap items-center gap-5 border-t border-white/20 pt-5 text-xs text-sky-100">
+              {(["Tinggi", "Sedang", "Rendah"] as RiskLevel[]).map((level) => (
+                <span key={level} className="flex items-center gap-2">
+                  <span className={`h-3 w-3 rounded-full ${level === "Tinggi" ? "bg-[#f38a50]" : level === "Sedang" ? "bg-[#82d4d0]" : "bg-[#123d61]"}`} />
+                  Risiko {level.toLowerCase()}
+                </span>
+              ))}
+            </div>
+          </motion.div>
+
+          <motion.aside
+            initial={{ opacity: 0, x: 18 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ delay: 0.12, duration: 0.6 }}
+            className="rounded-[34px] bg-[#f0e7e2] p-6 sm:p-8"
+          >
+            <p className="text-xs font-bold uppercase tracking-[0.2em] text-[#26669a]">Wilayah terpilih</p>
+            <select
+              value={selectedRegency}
+              onChange={(event) => {
+                setSelectedRegency(event.target.value);
+                setSelectedAreaSearch("");
+                setSelectedArea((current) => current && current.regency_code === event.target.value ? current : null);
+              }}
+              className="mt-3 w-full rounded-xl border-0 bg-white px-4 py-3 text-sm text-[#123d61] outline-none"
+              aria-label="Pilih kabupaten atau kota"
+            >
+              <option value="Semua">1. Pilih kabupaten/kota</option>
+              {regencies.map(([code, name]) => <option key={code} value={code}>{name}</option>)}
+            </select>
+            <label className="mt-4 block text-xs font-semibold text-[#26669a]" htmlFor="area-search">
+              2. Cari atau pilih wilayah
+            </label>
+            <input
+              id="area-search"
+              list="area-recommendations"
+              value={selectedAreaSearch}
+              disabled={selectedRegency === "Semua"}
+              onChange={(event) => {
+                const value = event.target.value;
+                setSelectedAreaSearch(value);
+                if (!value.trim()) setSelectedArea(null);
+                const selected = orderedAreas.find((area) =>
+                  area.regency_code === selectedRegency &&
+                  area.name.toLowerCase() === value.trim().toLowerCase(),
+                );
+                if (selected) setSelectedArea(selected);
+              }}
+              placeholder={selectedRegency === "Semua" ? "Pilih kabupaten/kota terlebih dahulu" : "Ketik nama wilayah..."}
+              className="mt-2 w-full rounded-xl border-0 bg-white px-4 py-3 text-sm text-[#123d61] outline-none disabled:cursor-not-allowed disabled:bg-slate-200"
+              aria-label="Cari atau pilih wilayah"
+            />
+            {selectedRegency !== "Semua" && selectedAreaSearch && !selectedExactMatch && selectedOptions.length > 0 && (
+              <div className="mt-2 max-h-36 overflow-y-auto rounded-xl bg-white p-2">
+                {selectedOptions.slice(0, 8).map((area) => (
+                  <button
+                    key={area.slug}
+                    type="button"
+                    onClick={() => {
+                      setSelectedArea(area);
+                      setSelectedAreaSearch(area.name);
+                    }}
+                    className="block w-full rounded-lg px-3 py-2 text-left text-xs text-[#123d61] hover:bg-[#dfeaf0]"
+                  >
+                    {area.name}
+                  </button>
+                ))}
+              </div>
+            )}
+            {!selectedArea && <p className="mt-4 text-sm text-slate-600">Pilih wilayah untuk melihat detail risiko.</p>}
+            {selectedArea && <>
+            <div className="mt-4 flex items-end justify-between gap-3">
+              <h2 className="text-3xl font-semibold tracking-[-0.06em] text-[#123d61]">{selectedArea.name}</h2>
+              <span className={`rounded-full px-3 py-1 text-xs font-bold ${riskColors[selectedArea.level]}`}>{selectedArea.level}</span>
+            </div>
+            <p className="mt-3 text-sm text-slate-600">{selectedArea.detail}</p>
+            {selectedArea.explanation?.caveat && <p className="mt-2 text-xs leading-5 text-slate-500">{selectedArea.explanation.caveat}</p>}
+            <div className="mt-4 rounded-2xl bg-white/70 p-4 text-sm text-slate-600">
+              <p className="font-semibold text-[#123d61]">Prakiraan BMKG terbaru</p>
+              <p className="mt-1">{selectedArea.weather.description ?? "Prakiraan cuaca tersedia"}</p>
+              <p className="mt-1">
+                Prakiraan hujan {selectedArea.weather.rainfall_mm ?? "-"} mm
+                {selectedArea.weather.temperature_c != null && ` · Suhu ${selectedArea.weather.temperature_c} °C`}
+                {selectedArea.weather.humidity_percent != null && ` · Kelembapan ${selectedArea.weather.humidity_percent}%`}
+              </p>
+            </div>
+            <div className="mt-8 flex items-end gap-3">
+              <span className="text-7xl font-semibold leading-none tracking-[-0.1em] text-[#123d61]">{selectedArea.score ?? "—"}</span>
+              <span className="pb-2 text-sm text-slate-500">skor estimasi<br />dari 100</span>
+            </div>
+            <div className="mt-6 h-2 rounded-full bg-white">
+              <motion.div
+                initial={{ width: 0 }}
+                animate={{ width: `${selectedArea.score ?? 0}%` }}
+                className="h-2 rounded-full bg-[#f38a50]"
+              />
+            </div>
+            <Link href={`/wilayah/${selectedArea.slug}`} className="mt-7 inline-flex w-full items-center justify-center rounded-full bg-[#26669a] px-5 py-3 text-sm font-bold text-white transition hover:bg-[#123d61]">
+              Lihat detail wilayah <span className="ml-2">↗</span>
+            </Link>
+            </>}
+          </motion.aside>
+        </div>
+      </section>
+
+      <section className="bg-[#f0e7e2] px-6 py-20">
+        <div className="mx-auto max-w-[1180px]">
+          <div className="flex flex-col justify-between gap-5 sm:flex-row sm:items-end">
+            <div>
+              <p className="text-xs font-bold uppercase tracking-[0.2em] text-[#f38a50]">Ringkasan wilayah</p>
+              <h2 className="mt-3 text-4xl font-semibold tracking-[-0.07em] text-[#123d61]">Bandingkan dengan cepat.</h2>
+            </div>
+            <div className="flex gap-2">
+              {(["Semua", "Tinggi", "Sedang", "Rendah"] as const).map((item) => (
+                <button key={item} type="button" onClick={() => setFilter(item)} className={`rounded-full px-4 py-2 text-xs font-bold transition ${filter === item ? "bg-[#123d61] text-white" : "bg-white text-slate-600 hover:bg-[#82d4d0]"}`}>
+                  {item}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="mt-6 grid gap-3 sm:grid-cols-[1fr_auto]">
+            <select
+              value={regency}
+              onChange={(event) => setRegency(event.target.value)}
+              className="rounded-xl border-0 bg-white px-4 py-3 text-sm text-[#123d61] outline-none"
+              aria-label="Filter kabupaten atau kota"
+            >
+              <option value="Semua">Semua kabupaten/kota</option>
+              {regencies.map(([code, name]) => <option key={code} value={code}>{name}</option>)}
+            </select>
+            <select
+              value={sort}
+              onChange={(event) => setSort(event.target.value as "risk" | "name")}
+              className="rounded-xl border-0 bg-white px-4 py-3 text-sm text-[#123d61] outline-none"
+              aria-label="Urutkan wilayah"
+            >
+              <option value="risk">Urutkan risiko</option>
+              <option value="name">Urutkan nama</option>
+            </select>
+          </div>
+          <div className="mt-10 divide-y divide-[#26669a]/15 border-y border-[#26669a]/15">
+            <div className="border-b border-[#26669a]/15 py-4">
+              <input
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder="Cari nama wilayah..."
+                className="w-full rounded-xl border-0 bg-white px-4 py-3 text-sm text-[#123d61] outline-none"
+                aria-label="Cari wilayah"
+              />
+            </div>
+            <div className="flex flex-col gap-3 border-b border-[#26669a]/15 py-4 sm:flex-row sm:items-center sm:justify-between">
+              <label className="flex items-center gap-2 text-sm text-slate-600">
+                Tampilkan
+                <select
+                  value={pageSize}
+                  onChange={(event) => {
+                    setPageSize(Number(event.target.value) as 5 | 10 | 20);
+                    setPage(1);
+                  }}
+                  className="rounded-lg border-0 bg-white px-3 py-2 text-sm text-[#123d61] outline-none"
+                  aria-label="Jumlah wilayah per halaman"
+                >
+                  <option value="5">5</option>
+                  <option value="10">10</option>
+                  <option value="20">20</option>
+                </select>
+                wilayah per halaman
+              </label>
+              <span className="text-xs text-slate-500">{visibleAreas.length} wilayah · halaman {page} dari {totalPages}</span>
+            </div>
+            {pagedAreas.map((area, index) => (
+              <motion.button
+                key={area.slug}
+                type="button"
+                onClick={() => setSelectedArea(area)}
+                initial={{ opacity: 0, x: -12 }}
+                whileInView={{ opacity: 1, x: 0 }}
+                viewport={{ once: true }}
+                transition={{ delay: index * 0.08 }}
+                className="grid w-full gap-3 py-6 text-left transition hover:px-3 sm:grid-cols-[1.2fr_1fr_0.5fr_auto] sm:items-center"
+              >
+                <span className="font-semibold text-[#123d61]">{area.name}<small className="mt-1 block font-normal text-slate-500">{area.regency_name ?? "Kabupaten/kota belum tersedia"}</small></span>
+                <span className="text-sm text-slate-500">
+                  {area.detail}
+                  <small className="mt-1 block">{regencyLabel(area)} · Prakiraan BMKG: {area.weather.rainfall_mm ?? "-"} mm</small>
+                </span>
+                <span className="text-2xl font-semibold text-[#123d61]">{area.score}</span>
+                <span className={`w-fit rounded-full px-3 py-1 text-xs font-bold ${riskColors[area.level]}`}>{area.level}</span>
+              </motion.button>
+            ))}
+            {visibleAreas.length === 0 && <p className="py-8 text-center text-sm text-slate-500">Wilayah tidak ditemukan.</p>}
+            {totalPages > 1 && <div className="flex flex-col gap-3 border-t border-[#26669a]/15 py-4 sm:flex-row sm:items-center sm:justify-between">
+              <button type="button" disabled={page === 1} onClick={() => setPage((current) => Math.max(1, current - 1))} className="w-full rounded-full bg-white px-4 py-2 text-xs font-bold text-[#123d61] disabled:cursor-not-allowed disabled:opacity-40 sm:w-auto">Sebelumnya</button>
+              <div className="flex max-w-full flex-wrap justify-center gap-1">
+                {paginationItems.map((item, index) => item === "ellipsis"
+                  ? <span key={`ellipsis-${index}`} className="flex h-8 min-w-8 items-center justify-center px-1 text-xs text-slate-500">...</span>
+                  : <button key={item} type="button" onClick={() => setPage(item)} className={`h-8 min-w-8 rounded-full px-2 text-xs font-bold ${page === item ? "bg-[#123d61] text-white" : "bg-white text-[#123d61]"}`}>{item}</button>)}
+              </div>
+              <button type="button" disabled={page === totalPages} onClick={() => setPage((current) => Math.min(totalPages, current + 1))} className="w-full rounded-full bg-white px-4 py-2 text-xs font-bold text-[#123d61] disabled:cursor-not-allowed disabled:opacity-40 sm:w-auto">Berikutnya</button>
+            </div>}
+          </div>
+        </div>
+      </section>
+
+      <section className="bg-[#dfeaf0] px-6 py-20">
+        <div className="mx-auto flex max-w-[1180px] flex-col justify-between gap-7 rounded-[30px] bg-[#26669a] p-8 text-white sm:p-12 md:flex-row md:items-center">
+          <div>
+            <p className="text-xs font-bold uppercase tracking-[0.2em] text-[#82d4d0]">Langkah berikutnya</p>
+            <h2 className="mt-3 max-w-2xl text-3xl font-semibold tracking-[-0.06em] sm:text-4xl">Sudah menemukan wilayah Anda?</h2>
+            <p className="mt-3 max-w-xl text-sm leading-7 text-sky-100/75">Baca faktor risiko dan saran kesiapsiagaan yang lebih lengkap di halaman detail wilayah.</p>
+          </div>
+          <Link href="/mitigasi" className="shrink-0 rounded-full bg-[#f38a50] px-6 py-3 text-sm font-bold text-[#123d61] transition hover:bg-[#ff9d67]">Baca panduan mitigasi</Link>
+        </div>
+      </section>
+
+      <Footer />
+    </main>
+  );
+}
