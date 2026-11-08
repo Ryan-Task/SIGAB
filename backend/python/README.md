@@ -46,6 +46,34 @@ diturunkan dan caveat ditampilkan. Nilai yang tidak tersedia tidak diisi
 dengan angka buatan. Pipeline ini adalah baseline rule-based yang dapat
 dijelaskan, bukan machine learning tervalidasi.
 
+Skor kualitas drainase menggunakan skala 0–100: semakin tinggi semakin baik.
+Dalam perhitungan risiko, pipeline menggunakan risiko drainase
+`100 - drainage_score`, sehingga kualitas 100 menurunkan risiko banjir.
+
+Jika file manual belum tersedia, pipeline dapat memakai proxy jaringan drainase
+yang benar-benar terpetakan di OpenStreetMap (`waterway=drain|ditch|canal`).
+Proxy ini menghitung jarak centroid ke saluran terdekat: semakin jauh jaringan
+yang terpetakan, semakin tinggi risiko drainase. Ini bukan penilaian kerusakan,
+kapasitas, atau sumbatan fisik. Nonaktifkan dengan
+`SIGAB_ENVIRONMENT_DRAINAGE_ENABLED=0`.
+
+### Skor drainase manual
+
+BMKG tidak menyediakan kondisi fisik drainase. Agar kondisi saluran dapat
+memengaruhi prediksi tanpa membuat data, isi file
+`backend/storage/app/private/drainage-scores.csv` berdasarkan survei atau data
+BPBD/PU. Salin format dari `drainage-scores.csv.example`:
+
+```csv
+area_code,physical_condition_score,capacity_score,coverage_score,maintenance_score,obstruction_score,source,observed_at
+35.15.01.2001,70,60,80,65,55,BPBD Kabupaten Sidoarjo,2026-11-06T00:00:00+07:00
+```
+
+Semua skor komponen adalah risiko 0–100: semakin tinggi, kondisi drainase
+semakin berisiko. Bobotnya adalah kondisi fisik 30%, kapasitas 25%, cakupan
+15%, pemeliharaan 15%, dan sumbatan 15%. Wilayah tanpa data manual tidak
+diberi nilai default dan komponen tersebut dikeluarkan dari perhitungan.
+
 ## Faktor lingkungan geospasial
 
 Pipeline dapat mengambil jarak centroid wilayah ke geometri sungai/saluran

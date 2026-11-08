@@ -316,6 +316,7 @@ class AreaDataController extends Controller
             'rainfall_score' => $prediction->rainfall_score,
             'history_score' => $prediction->history_score,
             'environment_score' => $prediction->environment_score,
+            'drainage_score' => $prediction->drainage_score,
             'method_version' => $prediction->method_version,
             'data_as_of' => $prediction->data_as_of,
             'calculated_at' => $prediction->calculated_at,
@@ -360,6 +361,12 @@ class AreaDataController extends Controller
             'url' => '',
             'status' => in_array('environment', $available, true) ? 'available' : 'unavailable',
         ];
+        $sources['drainage'] ??= [
+            'provider' => 'Manual survey / local authority',
+            'url' => '',
+            'status' => in_array('drainage', $available, true) ? 'available' : 'not_imported',
+        ];
+
         $explanation['available_components'] = array_values($available);
         $explanation['sources'] = $sources;
         $explanation['completeness'] ??= count($available) >= 2 ? 'standard' : 'limited';

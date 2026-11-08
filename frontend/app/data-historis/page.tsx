@@ -1,82 +1,41 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import SiteFooter from "../components/SiteFooter";
 import SiteNav from "../components/SiteNav";
+import { getFloodEventYears, getFloodHistoryByYear, type ApiFloodHistory } from "../../lib/api";
 
 const months = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des"];
-
-type HistoricalEvent = {
-  id: string;
-  area_name: string;
-  regency_code: string;
-  regency_name: string;
-  started_at: string;
-  verification_status: string;
-};
-
-type HistoricalData = {
-  year: number;
-  total: number;
-  monthly: Array<{ month: string; count: number }>;
-  events: HistoricalEvent[];
-  source_url: string;
-  updated_at: string;
-};
-
-const STATIC_EVENTS: HistoricalEvent[] = [
-  { id: "2024-sda-01", area_name: "Porong", regency_code: "35.15", regency_name: "Kabupaten Sidoarjo", started_at: "2024-01-18", verification_status: "Terverifikasi" },
-  { id: "2024-sda-02", area_name: "Tanggulangin", regency_code: "35.15", regency_name: "Kabupaten Sidoarjo", started_at: "2024-02-07", verification_status: "Terverifikasi" },
-  { id: "2024-sby-01", area_name: "Rungkut", regency_code: "35.78", regency_name: "Kota Surabaya", started_at: "2024-02-19", verification_status: "Terverifikasi" },
-  { id: "2024-sda-03", area_name: "Candi", regency_code: "35.15", regency_name: "Kabupaten Sidoarjo", started_at: "2024-03-12", verification_status: "Terverifikasi" },
-  { id: "2024-sby-02", area_name: "Gunung Anyar", regency_code: "35.78", regency_name: "Kota Surabaya", started_at: "2024-04-03", verification_status: "Terverifikasi" },
-  { id: "2024-sda-04", area_name: "Waru", regency_code: "35.15", regency_name: "Kabupaten Sidoarjo", started_at: "2024-06-22", verification_status: "Terverifikasi" },
-  { id: "2024-sby-03", area_name: "Sukolilo", regency_code: "35.78", regency_name: "Kota Surabaya", started_at: "2024-11-15", verification_status: "Terverifikasi" },
-  { id: "2023-sda-01", area_name: "Porong", regency_code: "35.15", regency_name: "Kabupaten Sidoarjo", started_at: "2023-01-09", verification_status: "Terverifikasi" },
-  { id: "2023-sby-01", area_name: "Wonokromo", regency_code: "35.78", regency_name: "Kota Surabaya", started_at: "2023-01-27", verification_status: "Terverifikasi" },
-  { id: "2023-sda-02", area_name: "Tanggulangin", regency_code: "35.15", regency_name: "Kabupaten Sidoarjo", started_at: "2023-03-18", verification_status: "Terverifikasi" },
-  { id: "2023-sby-02", area_name: "Rungkut", regency_code: "35.78", regency_name: "Kota Surabaya", started_at: "2023-05-06", verification_status: "Terverifikasi" },
-  { id: "2023-sda-03", area_name: "Candi", regency_code: "35.15", regency_name: "Kabupaten Sidoarjo", started_at: "2023-07-14", verification_status: "Terverifikasi" },
-  { id: "2023-sby-03", area_name: "Gunung Anyar", regency_code: "35.78", regency_name: "Kota Surabaya", started_at: "2023-12-02", verification_status: "Terverifikasi" },
-];
 
 function monthLabel(value: string): string {
   const [year, month] = value.split("-");
   return `${months[Number(month) - 1] ?? month} ${year}`;
 }
 
-function getHistory(year: number, regencyCode: string): HistoricalData {
-  const events = STATIC_EVENTS.filter((event) =>
-    event.started_at.startsWith(`${year}-`) &&
-    (!regencyCode || event.regency_code === regencyCode),
-  );
-  const monthly = Array.from({ length: 12 }, (_, index) => {
-    const month = String(index + 1).padStart(2, "0");
-    return {
-      month: `${year}-${month}`,
-      count: events.filter((event) => event.started_at.startsWith(`${year}-${month}`)).length,
-    };
-  });
-
-  return {
-    year,
-    total: events.length,
-    monthly,
-    events,
-    source_url: "https://dibi.bnpb.go.id/",
-    updated_at: "2026-01-01T00:00:00+07:00",
-  };
-}
-
 export default function DataHistorisPage() {
-  const years = [...new Set(STATIC_EVENTS.map((event) => Number(event.started_at.slice(0, 4))))].sort((a, b) => b - a);
-  const [selectedYear, setSelectedYear] = useState(years[0] ?? null);
+  const [history, setHistory] = useState<ApiFloodHistory | null>(null);
+  const [years, setYears] = useState<number[]>([]);
+  const [selectedYear, setSelectedYear] = useState<number | null>(null);
   const [selectedRegency, setSelectedRegency] = useState("");
-  const history = useMemo(
-    () => selectedYear === null ? null : getHistory(selectedYear, selectedRegency),
-    [selectedYear, selectedRegency],
-  );
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    getFloodEventYears()
+      .then((availableYears) => {
+        setYears(availableYears);
+        if (availableYears[0] !== undefined) setSelectedYear(availableYears[0]);
+      })
+      .catch(() => setError("Daftar tahun historis belum dapat dimuat."));
+  }, []);
+
+  useEffect(() => {
+    if (selectedYear === null) return;
+    setHistory(null);
+    getFloodHistoryByYear(selectedYear, selectedRegency).catch(() => setError("Data historis belum dapat dimuat.")).then((data) => {
+      if (data) setHistory(data);
+    });
+  }, [selectedYear, selectedRegency]);
 
   const maxMonthly = Math.max(...(history?.monthly.map((item) => item.count) ?? [0]), 1);
 
@@ -128,6 +87,7 @@ export default function DataHistorisPage() {
             {history && <span className="text-xs text-slate-500">Menampilkan histori {selectedRegency === "35.15" ? "Kabupaten Sidoarjo" : selectedRegency === "35.78" ? "Kota Surabaya" : "semua wilayah"} tahun {history.year}.</span>}
           </div>
 
+          {error && <p className="mt-8 rounded-2xl bg-red-100 p-5 text-sm text-red-800">{error}</p>}
           {history && history.total === 0 && (
             <div className="mt-8 rounded-[28px] bg-white p-8 text-slate-600">
               <p className="font-semibold text-[#123d61]">Riwayat banjir belum tersedia.</p>

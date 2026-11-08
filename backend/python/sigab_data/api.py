@@ -6,8 +6,10 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
 from .bmkg import BMKGClient, BMKGError
+from .drainage import DrainageDataError, load_drainage_scores
 from .environment import (
     EnvironmentDataError,
+    fetch_drainage_proxies,
     fetch_elevation_scores,
     fetch_river_distances,
 )
@@ -26,6 +28,7 @@ class PredictionRequest(BaseModel):
     adm4: list[str] | None = Field(default=None, max_length=100)
     history_score: float | None = Field(default=None, ge=0, le=100)
     environment_score: float | None = Field(default=None, ge=0, le=100)
+    drainage_score: float | None = Field(default=None, ge=0, le=100)
 
 
 class PredictionResponse(BaseModel):
@@ -69,6 +72,18 @@ def predict(request: PredictionRequest) -> PredictionResponse:
             errors.append({"area_code": area_code, "error": str(error)})
 
     environment_scores: dict[str, dict] = {}
+    drainage_scores: dict[str, dict] = {}
+    try:
+        drainage_scores = load_drainage_scores()
+    except DrainageDataError as error:
+        errors.append({"source": "Manual drainage dataset", "error": str(error)})
+    if os.getenv("SIGAB_ENVIRONMENT_DRAINAGE_ENABLED", "1").lower() not in {"0", "false", "no"}:
+        try:
+            mapped_drainage = fetch_drainage_proxies(areas)
+            for code, proxy in mapped_drainage.items():
+                drainage_scores.setdefault(code, proxy)
+        except EnvironmentDataError as error:
+            errors.append({"source": "OpenStreetMap Overpass drainage", "error": str(error)})
     try:
         environment_scores = fetch_elevation_scores(areas)
         if os.getenv("SIGAB_ENVIRONMENT_RIVER_ENABLED", "1").lower() not in {"0", "false", "no"}:
@@ -112,6 +127,16 @@ def predict(request: PredictionRequest) -> PredictionResponse:
                 if environment and environment.get("status") == "available"
                 else None
             )
+            drainage = drainage_scores.get(area_code)
+            drainage_score = (
+                request.drainage_score
+                if request.drainage_score is not None
+                else drainage["score"]
+                if drainage
+                else None
+            )
+            if drainage_score == 0:
+                drainage_score = None
             component_metadata = {
                 "rainfall": {
                     "quality_score": 0.8 if latest is not None else 0.0,
@@ -128,6 +153,11 @@ def predict(request: PredictionRequest) -> PredictionResponse:
                     "coverage_score": 1.0 if environment_score is not None else 0.0,
                     "age_score": 1.0 if environment_score is not None else 0.0,
                 },
+                "drainage": {
+                    "quality_score": 0.9 if drainage_score is not None else 0.0,
+                    "coverage_score": 1.0 if drainage_score is not None else 0.0,
+                    "age_score": 1.0 if drainage_score is not None else 0.0,
+                },
             }
             prediction = model.predict(
                 AreaInput(
@@ -135,6 +165,7 @@ def predict(request: PredictionRequest) -> PredictionResponse:
                     rainfall_score=rainfall_score(latest),
                     history_score=request.history_score,
                     environment_score=environment_score,
+                    drainage_score=drainage_score,
                     data_as_of=datetime.now(timezone.utc),
                     component_metadata=component_metadata,
                 )
@@ -171,13 +202,29 @@ def predict(request: PredictionRequest) -> PredictionResponse:
                     "longitude": environment["longitude"] if environment else area.get("longitude"),
                     "fetched_at": environment["fetched_at"] if environment else None,
                 },
+                "drainage": drainage or {
+                    "provider": "Manual survey / local authority or OpenStreetMap Overpass",
+                    "url": "",
+                    "status": "provided_score" if request.drainage_score is not None else "not_imported",
+                    "method": "provided_score" if request.drainage_score is not None else "manual_numeric_score",
+                },
             }
+            if drainage and drainage.get("score") == 0:
+                components["sources"]["drainage"]["status"] = "unavailable"
+                components["sources"]["drainage"]["method"] = "nearest_mapped_drainage_quality_proxy"
+                components["sources"]["drainage"]["caveat"] = (
+                    "Tidak ada jaringan drainase yang terpetakan dekat. "
+                    "Nilai 0 tidak dimasukkan ke perhitungan risiko."
+                )
+            if drainage and drainage.get("components"):
+                components["sources"]["drainage"]["drainage_components"] = drainage["components"]
+                components["sources"]["drainage"]["drainage_component_weights"] = drainage["component_weights"]
             components["completeness"] = (
-                "complete" if len(components["available_components"]) == 3
+                "complete" if len(components["available_components"]) == 4
                 else "partial" if len(components["available_components"]) >= 2
                 else "limited"
             )
-            missing = set({"rainfall", "history", "environment"}) - set(components["available_components"])
+            missing = set({"rainfall", "history", "environment", "drainage"}) - set(components["available_components"])
             components["caveat"] = (
                 f"Data belum lengkap ({', '.join(sorted(missing))}). "
                 "Skor memakai komponen yang tersedia sehingga dapat berubah saat data tambahan masuk."

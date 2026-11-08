@@ -44,6 +44,19 @@ class PipelineTest(unittest.TestCase):
         self.assertEqual(prediction.status, "valid")
         self.assertEqual(prediction.explanation["confidence"], "limited")
 
+    def test_good_drainage_quality_reduces_drainage_risk(self):
+        good = RuleBasedRiskModel().predict(
+            AreaInput(area_code="x", rainfall_score=50, drainage_score=100)
+        )
+        poor = RuleBasedRiskModel().predict(
+            AreaInput(area_code="x", rainfall_score=50, drainage_score=0)
+        )
+        self.assertEqual(good.drainage_score, 100)
+        self.assertIsNone(poor.drainage_score)
+        self.assertEqual(poor.explanation["available_components"], ["rainfall"])
+        self.assertEqual(good.explanation["available_components"], ["rainfall", "drainage"])
+        self.assertLess(good.score, poor.score)
+
     def test_confidence_accounts_for_quality_not_only_component_count(self):
         prediction = RuleBasedRiskModel().predict(
             AreaInput(

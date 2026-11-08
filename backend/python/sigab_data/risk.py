@@ -7,7 +7,7 @@ class RuleBasedRiskModel:
     """Explainable PRD baseline; absent components are excluded, never zeroed."""
 
     method_version = "rule-based-v4"
-    weights = {"rainfall": 0.5, "history": 0.4, "environment": 0.1}
+    weights = {"rainfall": 0.45, "history": 0.35, "environment": 0.05, "drainage": 0.15}
 
     @staticmethod
     def _validate_score(name: str, value: float | None) -> float | None:
@@ -18,10 +18,14 @@ class RuleBasedRiskModel:
         return float(value)
 
     def predict(self, area: AreaInput) -> Prediction:
+        drainage_quality = self._validate_score("drainage_score", area.drainage_score)
+        if drainage_quality == 0:
+            drainage_quality = None
         components = {
             "rainfall": self._validate_score("rainfall_score", area.rainfall_score),
             "history": self._validate_score("history_score", area.history_score),
             "environment": self._validate_score("environment_score", area.environment_score),
+            "drainage": None if drainage_quality is None else 100.0 - drainage_quality,
         }
         available = {
             name: value for name, value in components.items() if value is not None
@@ -44,7 +48,7 @@ class RuleBasedRiskModel:
         freshness = min(age_scores, default=0.0)
         confidence_score = min(data_quality, coverage, freshness)
         confidence = (
-            "high" if len(available) == 3 and confidence_score >= 0.9
+            "high" if len(available) == 4 and confidence_score >= 0.9
             else "medium" if len(available) >= 2 and confidence_score >= 0.7
             else "limited"
         )
@@ -66,6 +70,7 @@ class RuleBasedRiskModel:
                 rainfall_score=components["rainfall"],
                 history_score=components["history"],
                 environment_score=components["environment"],
+                drainage_score=drainage_quality,
                 method_version=self.method_version,
                 data_as_of=area.data_as_of,
                 explanation={
@@ -90,10 +95,11 @@ class RuleBasedRiskModel:
             rainfall_score=components["rainfall"],
             history_score=components["history"],
             environment_score=components["environment"],
+            drainage_score=drainage_quality,
             method_version=self.method_version,
             data_as_of=area.data_as_of,
             explanation={
-                "formula": "weighted average of available rainfall, history, and environment risk components",
+                "formula": "weighted average of risk components; drainage risk is 100 minus the drainage quality score, while unavailable zero scores are excluded",
                 "available_components": list(available),
                 "weights_used": {name: self.weights[name] for name in available},
                 "confidence": confidence,

@@ -27,6 +27,7 @@ class AreaInput:
     rainfall_score: float | None
     history_score: float | None = None
     environment_score: float | None = None
+    drainage_score: float | None = None
     data_as_of: datetime | None = None
     source: str = "BMKG"
     component_metadata: dict[str, dict[str, Any]] | None = None
@@ -44,6 +45,7 @@ class Prediction:
     method_version: str
     data_as_of: datetime | None
     explanation: dict[str, Any]
+    drainage_score: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
         value = asdict(self)
