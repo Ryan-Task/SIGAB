@@ -3,27 +3,9 @@
 import "leaflet/dist/leaflet.css";
 import * as L from "leaflet";
 import { useEffect, useRef } from "react";
+import type { ApiPrediction } from "../../lib/api";
 
-type RiskPrediction = {
-  slug: string;
-  name: string;
-  regency_code: string;
-  regency_name: string;
-  centroid_lat: number;
-  centroid_lng: number;
-  score: number;
-  risk_level: "high" | "medium" | "low";
-  status: "valid";
-  explanation: { caveat: string };
-  weather: {
-    description: string;
-    rainfall_mm: number;
-    temperature_c: number;
-    humidity_percent: number;
-  };
-};
-
-type RiskArea = RiskPrediction & {
+type RiskArea = ApiPrediction & {
   detail: string;
   level: "Tinggi" | "Sedang" | "Rendah";
   tone: string;

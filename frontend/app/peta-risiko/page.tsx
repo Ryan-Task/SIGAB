@@ -4,6 +4,7 @@ import { motion } from "framer-motion";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import SiteNav from "../components/SiteNav";
+import { getLatestPredictions, type ApiPrediction } from "../../lib/api";
 import type { MapZone } from "./RiskMap";
 import dynamic from "next/dynamic";
 
@@ -11,26 +12,7 @@ const RiskMap = dynamic(() => import("./RiskMap"), { ssr: false });
 
 type RiskLevel = "Tinggi" | "Sedang" | "Rendah";
 
-type RiskPrediction = {
-  slug: string;
-  name: string;
-  regency_code: string;
-  regency_name: string;
-  centroid_lat: number;
-  centroid_lng: number;
-  score: number;
-  risk_level: "high" | "medium" | "low";
-  status: "valid";
-  explanation: { caveat: string };
-  weather: {
-    description: string;
-    rainfall_mm: number;
-    temperature_c: number;
-    humidity_percent: number;
-  };
-};
-
-type RiskArea = RiskPrediction & { detail: string; level: RiskLevel; tone: string };
+type RiskArea = ApiPrediction & { detail: string; level: RiskLevel; tone: string };
 const ZONE_RADIUS_METERS = 1000;
 
 const riskColors: Record<RiskLevel, string> = {
@@ -39,62 +21,7 @@ const riskColors: Record<RiskLevel, string> = {
   Rendah: "bg-[#26669a] text-white",
 };
 
-/* ------------------------------------------------------------------ */
-/* DATA STATIK (pengganti getLatestPredictions dari backend)           */
-/* Edit/tambah data di bawah ini sesuai kebutuhan.                     */
-/* ------------------------------------------------------------------ */
-type StaticArea = {
-  slug: string;
-  name: string;
-  regency_code: string;
-  regency_name: string;
-  lat: number;
-  lng: number;
-  score: number;
-  risk_level: "high" | "medium" | "low";
-  description: string;
-  rainfall_mm: number;
-  temperature_c: number;
-  humidity_percent: number;
-};
-
-const STATIC_AREAS: StaticArea[] = [
-  { slug: "porong", name: "Porong", regency_code: "35.15", regency_name: "Kabupaten Sidoarjo", lat: -7.5436, lng: 112.6852, score: 86, risk_level: "high", description: "Hujan lebat", rainfall_mm: 42, temperature_c: 27, humidity_percent: 88 },
-  { slug: "tanggulangin", name: "Tanggulangin", regency_code: "35.15", regency_name: "Kabupaten Sidoarjo", lat: -7.5122, lng: 112.6945, score: 78, risk_level: "high", description: "Hujan sedang hingga lebat", rainfall_mm: 35, temperature_c: 28, humidity_percent: 85 },
-  { slug: "candi", name: "Candi", regency_code: "35.15", regency_name: "Kabupaten Sidoarjo", lat: -7.4960, lng: 112.7142, score: 64, risk_level: "medium", description: "Hujan sedang", rainfall_mm: 22, temperature_c: 29, humidity_percent: 80 },
-  { slug: "sidoarjo-kota", name: "Sidoarjo Kota", regency_code: "35.15", regency_name: "Kabupaten Sidoarjo", lat: -7.4478, lng: 112.7183, score: 58, risk_level: "medium", description: "Berawan", rainfall_mm: 15, temperature_c: 30, humidity_percent: 78 },
-  { slug: "waru", name: "Waru", regency_code: "35.15", regency_name: "Kabupaten Sidoarjo", lat: -7.3496, lng: 112.7280, score: 49, risk_level: "medium", description: "Hujan ringan", rainfall_mm: 10, temperature_c: 30, humidity_percent: 76 },
-  { slug: "taman", name: "Taman", regency_code: "35.15", regency_name: "Kabupaten Sidoarjo", lat: -7.3850, lng: 112.6900, score: 32, risk_level: "low", description: "Cerah berawan", rainfall_mm: 4, temperature_c: 31, humidity_percent: 70 },
-  { slug: "rungkut", name: "Rungkut", regency_code: "35.78", regency_name: "Kota Surabaya", lat: -7.3340, lng: 112.7770, score: 81, risk_level: "high", description: "Hujan lebat", rainfall_mm: 40, temperature_c: 28, humidity_percent: 87 },
-  { slug: "gunung-anyar", name: "Gunung Anyar", regency_code: "35.78", regency_name: "Kota Surabaya", lat: -7.3380, lng: 112.8000, score: 72, risk_level: "high", description: "Hujan sedang hingga lebat", rainfall_mm: 31, temperature_c: 28, humidity_percent: 84 },
-  { slug: "sukolilo", name: "Sukolilo", regency_code: "35.78", regency_name: "Kota Surabaya", lat: -7.2910, lng: 112.7900, score: 61, risk_level: "medium", description: "Hujan sedang", rainfall_mm: 20, temperature_c: 29, humidity_percent: 80 },
-  { slug: "wonokromo", name: "Wonokromo", regency_code: "35.78", regency_name: "Kota Surabaya", lat: -7.3010, lng: 112.7370, score: 55, risk_level: "medium", description: "Berawan", rainfall_mm: 14, temperature_c: 30, humidity_percent: 77 },
-  { slug: "tegalsari", name: "Tegalsari", regency_code: "35.78", regency_name: "Kota Surabaya", lat: -7.2750, lng: 112.7340, score: 38, risk_level: "low", description: "Cerah berawan", rainfall_mm: 6, temperature_c: 31, humidity_percent: 72 },
-  { slug: "genteng", name: "Genteng", regency_code: "35.78", regency_name: "Kota Surabaya", lat: -7.2570, lng: 112.7450, score: 27, risk_level: "low", description: "Cerah", rainfall_mm: 2, temperature_c: 32, humidity_percent: 68 },
-];
-
-function buildStaticPredictions(): RiskPrediction[] {
-  return STATIC_AREAS.map((item) => ({
-    slug: item.slug,
-    name: item.name,
-    regency_code: item.regency_code,
-    regency_name: item.regency_name,
-    centroid_lat: item.lat,
-    centroid_lng: item.lng,
-    score: item.score,
-    risk_level: item.risk_level,
-    status: "valid",
-    explanation: { caveat: "Data contoh statis, bukan prakiraan resmi." },
-    weather: {
-      description: item.description,
-      rainfall_mm: item.rainfall_mm,
-      temperature_c: item.temperature_c,
-      humidity_percent: item.humidity_percent,
-    },
-  }));
-}
-
-function toRiskArea(prediction: RiskPrediction): RiskArea {
+function toRiskArea(prediction: ApiPrediction): RiskArea {
   const level = prediction.risk_level === "high" ? "Tinggi" : prediction.risk_level === "medium" ? "Sedang" : "Rendah";
   return {
     ...prediction,
@@ -104,9 +31,7 @@ function toRiskArea(prediction: RiskPrediction): RiskArea {
   };
 }
 
-const INITIAL_AREAS: RiskArea[] = buildStaticPredictions().map(toRiskArea);
-
-function regencyLabel(area: Pick<RiskPrediction, "regency_code" | "regency_name">): string {
+function regencyLabel(area: Pick<ApiPrediction, "regency_code" | "regency_name">): string {
   if (area.regency_code === "35.15") return "Kabupaten Sidoarjo";
   if (area.regency_code === "35.78") return "Kota Surabaya";
   return area.regency_name && !/^\d+(?:\.\d+)+$/.test(area.regency_name)
@@ -200,8 +125,8 @@ function Footer() {
 }
 
 export default function PetaRisikoPage() {
-  const [riskAreas] = useState<RiskArea[]>(INITIAL_AREAS);
-  const [selectedArea, setSelectedArea] = useState<RiskArea | null>(INITIAL_AREAS[0] ?? null);
+  const [riskAreas, setRiskAreas] = useState<RiskArea[]>([]);
+  const [selectedArea, setSelectedArea] = useState<RiskArea | null>(null);
   const [filter, setFilter] = useState<"Semua" | RiskLevel>("Semua");
   const [regency, setRegency] = useState("Semua");
   const [selectedRegency, setSelectedRegency] = useState("Semua");
@@ -210,7 +135,19 @@ export default function PetaRisikoPage() {
   const [search, setSearch] = useState("");
   const [pageSize, setPageSize] = useState<5 | 10 | 20>(5);
   const [page, setPage] = useState(1);
-
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    const load = () => getLatestPredictions()
+      .then((predictions) => {
+        const areas = predictions.map(toRiskArea);
+        setRiskAreas(areas);
+        setSelectedArea((current) => current ?? areas[0] ?? null);
+      })
+      .catch(() => setError("Data risiko belum dapat dimuat. Pastikan server Laravel aktif."));
+    load();
+    const refresh = window.setInterval(load, 300_000);
+    return () => window.clearInterval(refresh);
+  }, []);
   useEffect(() => {
     setPage(1);
   }, [filter, regency, search, pageSize]);
@@ -362,7 +299,8 @@ export default function PetaRisikoPage() {
                 ))}
               </div>
             )}
-            {!selectedArea && <p className="mt-4 text-sm text-slate-600">Pilih wilayah untuk melihat detail risiko.</p>}
+            {error && <p className="mt-4 text-sm text-slate-600">{error}</p>}
+            {!selectedArea && !error && <p className="mt-4 text-sm text-slate-600">Memuat data risiko...</p>}
             {selectedArea && <>
             <div className="mt-4 flex items-end justify-between gap-3">
               <h2 className="text-3xl font-semibold tracking-[-0.06em] text-[#123d61]">{selectedArea.name}</h2>
@@ -391,7 +329,7 @@ export default function PetaRisikoPage() {
               />
             </div>
             <Link href={`/wilayah/${selectedArea.slug}`} className="mt-7 inline-flex w-full items-center justify-center rounded-full bg-[#26669a] px-5 py-3 text-sm font-bold text-white transition hover:bg-[#123d61]">
-              Lihat detail wilayah <span className="ml-2">↗</span>
+              Lihat detail wilayah
             </Link>
             </>}
           </motion.aside>
