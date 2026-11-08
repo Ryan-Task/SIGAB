@@ -2,92 +2,14 @@
 
 import { motion } from "framer-motion";
 import Link from "next/link";
+import { useEffect, useState } from "react";
+import { getAreaRainfall, getAreaRisk, type ApiRiskExplanation, type ApiRiskPrediction } from "../../../lib/api";
 
 type Props = { wilayah: string };
 
-type SourceDetail = {
-  status: "available";
-  provider: string;
-  elevation_m?: number;
-  river_distance_m?: number;
-  fetched_at: string;
-  method?: string;
-  score?: number;
-  environment_components?: {
-    elevation_score: number;
-    river_proximity_score: number;
-  };
-  drainage_components?: {
-    physical_condition_score: number;
-    capacity_score: number;
-    coverage_score: number;
-    maintenance_score: number;
-    obstruction_score: number;
-  };
-};
-
-type RiskExplanation = {
-  caveat: string;
-  completeness: "complete";
-  confidence: "high";
-  confidence_reasons: string[];
-  sources: Record<string, SourceDetail>;
-};
-
-type RiskPrediction = {
-  score: number;
-  risk_level: "high" | "medium" | "low";
-  explanation: RiskExplanation;
-  rainfall_score: number;
-  history_score: number;
-  environment_score: number;
-  drainage_score: number;
-  data_as_of: string;
-};
-
-type StaticArea = {
-  name: string;
-  slug: string;
-  prediction: RiskPrediction;
-  rainfall: string;
-  rainfallProbability: number;
-  rainfallUpdatedAt: string;
-};
-
-function sourceStatus(explanation: RiskExplanation | null | undefined, key: string): string {
+function sourceStatus(explanation: ApiRiskExplanation | null | undefined, key: string): string {
   return explanation?.sources?.[key]?.status === "available" ? "Tersedia" : "Belum tersedia";
 }
-
-const STATIC_AREAS: Record<string, StaticArea> = {
-  surabaya: {
-    name: "Surabaya",
-    slug: "surabaya",
-    rainfall: "28",
-    rainfallProbability: 70,
-    rainfallUpdatedAt: "2026-11-07T16:00:00+07:00",
-    prediction: {
-      score: 68,
-      risk_level: "medium",
-      rainfall_score: 70,
-      history_score: 62,
-      environment_score: 58,
-      drainage_score: 64,
-      data_as_of: "2026-11-07T16:00:00+07:00",
-      explanation: {
-        caveat: "Data contoh statis untuk demonstrasi SIGAB, bukan prakiraan resmi.",
-        completeness: "complete",
-        confidence: "high",
-        confidence_reasons: ["Data wilayah tersedia", "Parameter risiko telah diisi"],
-        sources: {
-          rainfall: { status: "available", provider: "BMKG", fetched_at: "2026-11-07T16:00:00+07:00" },
-          history: { status: "available", provider: "DIBI BNPB", fetched_at: "2026-01-01T00:00:00+07:00" },
-          environment: { status: "available", provider: "Data lingkungan statis", elevation_m: 5, river_distance_m: 1200, fetched_at: "2026-01-01T00:00:00+07:00", environment_components: { elevation_score: 52, river_proximity_score: 64 } },
-          drainage: { status: "available", provider: "Data drainase statis", fetched_at: "2026-01-01T00:00:00+07:00", method: "static_reference", drainage_components: { physical_condition_score: 65, capacity_score: 62, coverage_score: 68, maintenance_score: 60, obstruction_score: 64 } },
-        },
-      },
-    },
-  },
-};
 
 function formatRelativeTime(value: string): string {
   const elapsedMinutes = Math.max(0, Math.floor((Date.now() - new Date(value).getTime()) / 60_000));
@@ -110,27 +32,39 @@ function formatDateTime(value: string): string {
 }
 
 export default function WilayahView({ wilayah }: Props) {
-  const fallbackArea = STATIC_AREAS.surabaya;
-  const area = STATIC_AREAS[wilayah] ?? {
-    ...fallbackArea,
-    name: wilayah.replaceAll("-", " ").replace(/\b\w/g, (letter) => letter.toUpperCase()),
-    slug: wilayah,
-  };
-  const prediction = area.prediction;
-  const rainfall = area.rainfall;
-  const rainfallProbability = area.rainfallProbability;
-  const rainfallUpdatedAt = area.rainfallUpdatedAt;
+  const [area, setArea] = useState<{ name: string; slug: string } | null>(null);
+  const [prediction, setPrediction] = useState<ApiRiskPrediction | null>(null);
+  const [rainfall, setRainfall] = useState<string | null>(null);
+  const [rainfallProbability, setRainfallProbability] = useState<number | string | null>(null);
+  const [rainfallUpdatedAt, setRainfallUpdatedAt] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
-  const title = area.name;
-  const score = prediction.score;
-  const riskLabel = prediction.risk_level === "high" ? "Tinggi" : prediction.risk_level === "medium" ? "Sedang" : "Rendah";
-  const explanation = prediction.explanation;
+  useEffect(() => {
+    const load = () => Promise.all([getAreaRisk(wilayah), getAreaRainfall(wilayah)])
+      .then(([risk, rainfallResponse]) => {
+        setArea(risk.area);
+        setPrediction(risk.prediction);
+        setRainfall(rainfallResponse.data[0]?.rainfall_mm ?? null);
+        setRainfallProbability(rainfallResponse.data[0]?.rainfall_probability ?? null);
+        setRainfallUpdatedAt(rainfallResponse.data[0]?.observed_at ?? risk.prediction?.data_as_of ?? null);
+      })
+      .catch(() => setError("Data wilayah belum dapat dimuat. Pastikan server Laravel aktif."));
+    setError(null);
+    load();
+    const refresh = window.setInterval(load, 300_000);
+    return () => window.clearInterval(refresh);
+  }, [wilayah]);
+
+  const title = area?.name ?? wilayah.replaceAll("-", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+  const score = prediction?.score ?? null;
+  const riskLabel = prediction?.risk_level === "high" ? "Tinggi" : prediction?.risk_level === "medium" ? "Sedang" : prediction?.risk_level === "low" ? "Rendah" : "Data belum cukup";
+  const explanation = prediction?.explanation;
   const environmentSource = explanation?.sources?.environment;
   const environmentComponents = environmentSource?.environment_components;
   const drainageSource = explanation?.sources?.drainage;
-  const rainfallScore = Number(prediction.rainfall_score);
-  const environmentScore = Number(prediction.environment_score);
-  const drainageScore = Number(prediction.drainage_score);
+  const rainfallScore = prediction?.rainfall_score == null ? null : Number(prediction.rainfall_score);
+  const environmentScore = prediction?.environment_score == null ? null : Number(prediction.environment_score);
+  const drainageScore = prediction?.drainage_score == null ? null : Number(prediction.drainage_score);
   const drainageIsUnmapped = drainageScore === null
     && drainageSource?.method === "nearest_mapped_drainage_quality_proxy"
     && drainageSource?.score === 0;
@@ -166,6 +100,7 @@ export default function WilayahView({ wilayah }: Props) {
             <div><h1 className="text-5xl font-semibold tracking-[-0.08em] sm:text-7xl">{title}</h1><p className="mt-4 max-w-xl text-base leading-8 text-sky-100/75">Gambaran kondisi, faktor risiko, dan sumber data wilayah ini.</p></div>
             <span className="w-fit rounded-full bg-[#f38a50] px-4 py-2 text-sm font-bold text-[#123d61]">{riskLabel}</span>
           </div>
+          {error && <p className="mt-5 text-sm text-sky-100/75">{error}</p>}
         </div>
       </section>
 
