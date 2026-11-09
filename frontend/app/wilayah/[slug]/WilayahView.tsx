@@ -74,7 +74,7 @@ export default function WilayahView({ wilayah }: Props) {
       ? "Tidak terpetakan dekat"
     : drainageScore >= 67 ? "Baik" : drainageScore >= 34 ? "Perlu perhatian" : "Kurang baik";
   const probabilityLabel = rainfallProbability == null
-    ? "Peluang belum tersedia"
+    ? "Tidak ada"
     : `${String(rainfallProbability).replace("%", "")}%`;
   const probabilityWidth = Number.parseFloat(String(rainfallProbability ?? 0)) || 0;
   const updatedLabel = rainfallUpdatedAt
@@ -115,7 +115,7 @@ export default function WilayahView({ wilayah }: Props) {
           <div className="grid gap-5 md:grid-cols-3">
             {[
               ["Skor risiko", score === null ? "—" : String(score), "dari 100"],
-              ["Peluang hujan BMKG", rainfallProbability == null ? "—" : `${String(rainfallProbability).replace("%", "")}%`, rainfall == null ? `Skor hujan: ${rainfallScore ?? "—"}/100` : `${rainfall} mm · skor hujan ${rainfallScore ?? "—"}/100`],
+              ["Peluang hujan BMKG", rainfallProbability == null ? "Tidak ada" : `${String(rainfallProbability).replace("%", "")}%`, rainfall == null ? `Skor hujan: ${rainfallScore ?? "—"}/100` : `${rainfall} mm · skor hujan ${rainfallScore ?? "—"}/100`],
               ["Pembaruan", updatedLabel, `${updatedDateTime} · refresh otomatis setiap 5 menit`],
             ].map(([label, value, suffix], index) => (
               <motion.div key={label} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: index * 0.1 }} className={`${index === 0 ? "bg-[#f38a50] text-[#123d61]" : "bg-white"} rounded-[28px] p-7`}>
@@ -140,7 +140,7 @@ export default function WilayahView({ wilayah }: Props) {
                 {environmentSource?.river_distance_m != null && <p>Jarak centroid wilayah ke sungai terdekat: {environmentSource.river_distance_m} m. Nilai ini adalah proxy, bukan kepastian banjir.</p>}
               </div>
             </div>
-            <div className="rounded-[30px] bg-[#f0e7e2] p-8"><p className="text-xs font-bold uppercase tracking-[0.18em] text-[#f38a50]">Cuaca BMKG</p><h2 className="mt-4 text-3xl font-semibold tracking-[-0.06em] text-[#123d61]">Informasi prakiraan</h2><p className="mt-4 text-sm leading-7 text-slate-600">Peluang hujan {probabilityLabel}, dengan prakiraan jumlah {rainfall ?? "—"} mm pada slot waktu ini.</p><p className="mt-4 text-xs leading-5 text-slate-500">Data BMKG adalah prakiraan per slot waktu, bukan observasi hujan aktual. Halaman ini mengambil data terbaru otomatis setiap 5 menit. Nilai peluang dapat belum tersedia bila BMKG tidak mengirimkan data persentasenya.</p></div>
+            <div className="rounded-[30px] bg-[#f0e7e2] p-8"><p className="text-xs font-bold uppercase tracking-[0.18em] text-[#f38a50]">Cuaca BMKG</p><h2 className="mt-4 text-3xl font-semibold tracking-[-0.06em] text-[#123d61]">Informasi prakiraan</h2><p className="mt-4 text-sm leading-7 text-slate-600">Peluang hujan {probabilityLabel}, dengan prakiraan jumlah {rainfall ?? "Tidak ada"} mm pada slot waktu ini.</p><p className="mt-4 text-xs leading-5 text-slate-500">Data BMKG adalah prakiraan per slot waktu, bukan observasi hujan aktual. Halaman ini mengambil data terbaru otomatis setiap 5 menit. Nilai peluang ditampilkan sebagai Tidak ada bila BMKG tidak mengirimkan data persentasenya.</p></div>
           </div>
 
           <div className="mt-8 rounded-[30px] bg-white p-8">
