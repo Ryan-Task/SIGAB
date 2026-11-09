@@ -130,12 +130,33 @@ class PredictionImportController extends Controller
                 if ($areaId === null) {
                     continue;
                 }
+                $historyCount = $this->historyCount($areaId);
+                $historyScore = $historyCount === null
+                    ? null
+                    : $this->historyRiskScore($historyCount);
+                $score = $this->calculateScore($prediction, $historyScore);
+                $riskLevel = $score === null
+                    ? $prediction['risk_level']
+                    : ($score <= 33 ? 'low' : ($score <= 66 ? 'medium' : 'high'));
+                $explanation = $prediction['explanation'] ?? [];
+                if (! is_array($explanation)) {
+                    $explanation = [];
+                }
+                if ($historyScore !== null) {
+                    $explanation['history_scope'] = 'village';
+                    $explanation['history_source_status'] = 'secondary_geocoded_news';
+                    $explanation['history_caveat'] = 'Histori berasal dari dataset publik berbasis berita dan hanya mencakup lokasi yang berhasil dipetakan ke kelurahan.';
+                    $explanation['history_count'] = $historyCount;
+                    $explanation['history_frequency'] = $this->historyFrequency($historyCount);
+                }
                 DB::table('risk_predictions')->insert([
                     'area_id' => $areaId,
-                    'score' => $prediction['score'] ?? null,
-                    'risk_level' => $prediction['risk_level'],
+                    'score' => $score,
+                    'risk_level' => $riskLevel,
                     'rainfall_score' => $prediction['rainfall_score'] ?? null,
-                    'history_score' => $prediction['history_score'] ?? null,
+                    'history_score' => $historyScore,
+                    'history_count' => $historyCount,
+                    'history_frequency' => $historyCount === null ? null : $this->historyFrequency($historyCount),
                     'environment_score' => $prediction['environment_score'] ?? null,
                     'drainage_score' => $prediction['drainage_score'] ?? null,
                     'input_snapshot' => json_encode(['source' => $payload['metadata']['source']]),
@@ -143,7 +164,7 @@ class PredictionImportController extends Controller
                     'data_as_of' => $prediction['data_as_of'] ?? null,
                     'calculated_at' => now(),
                     'status' => $prediction['status'],
-                    'explanation' => isset($prediction['explanation']) ? json_encode($prediction['explanation']) : null,
+                    'explanation' => $explanation === [] ? null : json_encode($explanation),
                     'created_at' => now(),
                     'updated_at' => now(),
                 ]);
@@ -154,5 +175,52 @@ class PredictionImportController extends Controller
         });
 
         return response()->json(['message' => 'Prediction data imported.', 'imported' => $imported]);
+    }
+
+    private function historyCount(int $areaId): ?int
+    {
+        $count = DB::table('flood_events')
+            ->where('area_id', $areaId)
+            ->where('started_at', '>=', now()->subYear())
+            ->where('verification_status', 'source_reported')
+            ->count();
+
+        return $count === 0 ? null : $count;
+    }
+
+    private function historyFrequency(int $count): string
+    {
+        return $count > 5 ? 'sering' : ($count >= 2 ? 'terkadang' : 'jarang');
+    }
+
+    private function historyRiskScore(int $count): float
+    {
+        return $count > 5 ? 100.0 : ($count >= 2 ? 60.0 : 20.0);
+    }
+
+    private function calculateScore(array $prediction, ?float $historyScore): ?int
+    {
+        $components = [
+            'rainfall' => $prediction['rainfall_score'] ?? null,
+            'history' => $historyScore,
+            'environment' => $prediction['environment_score'] ?? null,
+            'drainage' => isset($prediction['drainage_score']) && $prediction['drainage_score'] !== null
+                ? 100 - (float) $prediction['drainage_score']
+                : null,
+        ];
+        $weights = ['rainfall' => 0.45, 'history' => 0.35, 'environment' => 0.05, 'drainage' => 0.15];
+        $available = array_filter($components, static fn ($value) => $value !== null);
+        if ($available === []) {
+            return null;
+        }
+
+        $totalWeight = 0.0;
+        $weightedScore = 0.0;
+        foreach ($available as $name => $value) {
+            $totalWeight += $weights[$name];
+            $weightedScore += $weights[$name] * (float) $value;
+        }
+
+        return (int) round($weightedScore / $totalWeight);
     }
 }

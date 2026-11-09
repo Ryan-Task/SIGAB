@@ -83,9 +83,15 @@ export default function WilayahView({ wilayah }: Props) {
   const updatedDateTime = rainfallUpdatedAt
     ? formatDateTime(rainfallUpdatedAt)
     : "Tanggal dan waktu belum tersedia";
+  const historyCount = prediction?.history_count ?? null;
+  const historyFrequency = prediction?.history_frequency;
+  const historyLabel = historyCount === null
+    ? "Tidak ada / belum ada data"
+    : `${historyCount} kejadian · ${historyFrequency === "sering" ? "Sering" : historyFrequency === "terkadang" ? "Terkadang" : "Jarang"}`;
+  const historyWidth = historyFrequency === "sering" ? "100%" : historyFrequency === "terkadang" ? "60%" : historyFrequency === "jarang" ? "20%" : "0%";
   const factors = [
     { label: "Hujan BMKG", value: rainfall === null ? "Belum tersedia" : `${probabilityLabel} · skor ${rainfallScore ?? "—"}/100`, width: `${Math.min(100, Math.max(0, rainfallScore ?? 0))}%` },
-    { label: "Riwayat banjir", value: prediction?.history_score === null || prediction?.history_score === undefined ? "Belum tersedia" : `${prediction.history_score}`, width: `${prediction?.history_score ?? 0}%` },
+    { label: "Riwayat banjir", value: historyLabel, width: historyWidth },
     { label: "Faktor lingkungan", value: environmentScore === null ? "Belum tersedia" : `${environmentScore}/100`, width: `${environmentScore ?? 0}%` },
     { label: "Kondisi drainase", value: drainageScore === null ? "Belum tersedia" : `${drainageScore}/100 · ${drainageLabel}`, width: `${drainageScore ?? 0}%` },
   ];
@@ -125,6 +131,7 @@ export default function WilayahView({ wilayah }: Props) {
               <div className="mt-8 space-y-6">{factors.map((factor) => <div key={factor.label}><div className="flex justify-between text-sm"><span>{factor.label}</span><span className="text-right text-[#82d4d0]">{factor.value}</span></div><div className="mt-2 h-2 rounded-full bg-white/15"><motion.div initial={{ width: 0 }} animate={{ width: factor.width }} transition={{ duration: 0.8 }} className="h-2 rounded-full bg-[#f38a50]" /></div></div>)}</div>
               <div className="mt-6 space-y-2 rounded-2xl bg-white/10 p-4 text-xs leading-5 text-sky-100/80">
                 <p>BMKG memperkirakan peluang hujan {probabilityLabel} pada slot waktu terbaru, dengan jumlah sekitar {rainfall ?? "—"} mm. Skor hujan untuk perhitungan risiko: {rainfallScore ?? "—"}/100.</p>
+                <p>Dalam 12 bulan terakhir tercatat {historyLabel.toLowerCase()}. Lebih dari 5 kejadian dikategorikan sering, 2–5 terkadang, dan 1 jarang. Jika tidak ada data, histori tidak dimasukkan ke perhitungan.</p>
                 <p>Skor lingkungan menggabungkan elevasi {environmentComponents?.elevation_score ?? "—"} dan kedekatan sungai {environmentComponents?.river_proximity_score ?? "—"}.</p>
                 {drainageScore !== null
                   ? <p>Skor kualitas drainase {drainageScore}/100: {drainageLabel}. Semakin tinggi skor, semakin baik ketersediaan atau kondisi drainase. Nilai ini membantu menurunkan skor risiko.{drainageSource?.method === "nearest_mapped_drainage_quality_proxy" && " Data ini adalah proxy kedekatan jaringan OSM, bukan pemeriksaan fisik."}</p>

@@ -309,12 +309,15 @@ class AreaDataController extends Controller
 
     private function predictionPayload(object $prediction): array
     {
+        $historyCount = $this->historyCount((int) $prediction->area_id);
         return [
             'id' => $prediction->id,
             'score' => $prediction->score,
             'risk_level' => $prediction->risk_level,
             'rainfall_score' => $prediction->rainfall_score,
             'history_score' => $prediction->history_score,
+            'history_count' => $historyCount,
+            'history_frequency' => $historyCount === null ? null : $this->historyFrequency($historyCount),
             'environment_score' => $prediction->environment_score,
             'drainage_score' => $prediction->drainage_score,
             'method_version' => $prediction->method_version,
@@ -338,6 +341,17 @@ class AreaDataController extends Controller
         if (! is_array($available)) {
             $available = [];
         }
+        $historyCount = $this->historyCount((int) $prediction->area_id);
+        if ($historyCount !== null) {
+            if (! in_array('history', $available, true)) {
+                $available[] = 'history';
+            }
+            $explanation['history_count'] = $historyCount;
+            $explanation['history_frequency'] = $this->historyFrequency($historyCount);
+        } else {
+            $available = array_values(array_filter($available, static fn ($name) => $name !== 'history'));
+            unset($explanation['history_count'], $explanation['history_frequency']);
+        }
         if ($rainfallAvailable && ! in_array('rainfall', $available, true)) {
             $available[] = 'rainfall';
         }
@@ -351,10 +365,10 @@ class AreaDataController extends Controller
             'url' => 'https://api.bmkg.go.id/publik/prakiraan-cuaca',
             'status' => in_array('rainfall', $available, true) ? 'available' : 'unavailable',
         ];
-        $sources['history'] ??= [
-            'provider' => 'DIBI BNPB',
-            'url' => 'https://dibi.bnpb.go.id/superset/dashboard/2/',
-            'status' => in_array('history', $available, true) ? 'available' : 'not_imported',
+        $sources['history'] = [
+            'provider' => 'Dataset publik riwayat banjir Surabaya',
+            'url' => 'https://github.com/partadox/history_flood_sby',
+            'status' => $historyCount !== null ? 'available' : 'not_imported',
         ];
         $sources['environment'] ??= [
             'provider' => 'Belum tersedia',
@@ -376,5 +390,21 @@ class AreaDataController extends Controller
             : 'Perhitungan menggunakan seluruh komponen yang tersedia.';
 
         return $explanation;
+    }
+
+    private function historyCount(int $areaId): ?int
+    {
+        $count = DB::table('flood_events')
+            ->where('area_id', $areaId)
+            ->where('started_at', '>=', now()->subYear())
+            ->where('verification_status', 'source_reported')
+            ->count();
+
+        return $count === 0 ? null : $count;
+    }
+
+    private function historyFrequency(int $count): string
+    {
+        return $count > 5 ? 'sering' : ($count >= 2 ? 'terkadang' : 'jarang');
     }
 }

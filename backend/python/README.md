@@ -46,6 +46,29 @@ diturunkan dan caveat ditampilkan. Nilai yang tidak tersedia tidak diisi
 dengan angka buatan. Pipeline ini adalah baseline rule-based yang dapat
 dijelaskan, bukan machine learning tervalidasi.
 
+### Histori lokasi detail Surabaya
+
+File `backend/storage/app/private/bpbd-banjir-2020-2025.csv` berisi dataset
+publik riset `partadox/history_flood_sby`, yang mengekstrak berita banjir
+Surabaya dan melakukan geocoding lokasi. Dataset ini bukan data BPBD resmi dan
+sebagian baris hanya memiliki nama jalan atau titik lokasi. Import hanya
+memetakan baris yang secara eksplisit memuat nama kelurahan yang cocok dengan
+master `areas`; baris lain tidak dipaksakan ke kelurahan.
+
+Import dengan:
+
+```powershell
+cd backend
+php artisan history:import-detailed storage\app\private\bpbd-banjir-2020-2025.csv
+```
+
+Histori terpetakan dihitung berdasarkan jumlah kejadian 12 bulan terakhir
+dan digunakan saat prediction diimpor ke Laravel. Satu kejadian dikategorikan
+jarang, 2--5 kejadian terkadang, dan lebih dari 5 kejadian sering. Jika tidak
+ada kejadian atau data, komponen histori tidak dimasukkan ke skor. Karena sumbernya sekunder
+dan cakupannya tidak lengkap, skor histori adalah indikator pendukung, bukan
+catatan resmi kejadian per kelurahan.
+
 Skor kualitas drainase menggunakan skala 0–100: semakin tinggi semakin baik.
 Dalam perhitungan risiko, pipeline menggunakan risiko drainase
 `100 - drainage_score`, sehingga kualitas 100 menurunkan risiko banjir.

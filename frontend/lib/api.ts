@@ -77,6 +77,8 @@ export type ApiRiskPrediction = {
   risk_level: "low" | "medium" | "high" | "insufficient";
   rainfall_score: string | null;
   history_score: string | null;
+  history_count: number | null;
+  history_frequency: "sering" | "terkadang" | "jarang" | null;
   environment_score: string | null;
   drainage_score: string | null;
   method_version: string;
