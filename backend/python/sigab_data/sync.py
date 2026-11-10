@@ -90,7 +90,7 @@ def sync_once() -> None:
 
 
 def main() -> None:
-    interval = int(os.getenv("SIGAB_SYNC_INTERVAL_SECONDS", "300"))
+    interval = int(os.getenv("SIGAB_SYNC_INTERVAL_SECONDS", "10800"))
     if interval < 60:
         raise SystemExit("SIGAB_SYNC_INTERVAL_SECONDS must be at least 60")
     print(

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-from .models import AreaInput, Prediction
+from datetime import datetime, timedelta, timezone
+
+from .models import AreaInput, Prediction, RainfallRecord
 
 
 class RuleBasedRiskModel:
-    """Explainable PRD baseline; absent components are excluded, never zeroed."""
+    """Explainable PRD baseline; absent components contribute no risk."""
 
     method_version = "rule-based-v4"
     weights = {"rainfall": 0.45, "history": 0.35, "environment": 0.05, "drainage": 0.15}
@@ -81,10 +83,8 @@ class RuleBasedRiskModel:
                 },
             )
 
-        total_weight = sum(self.weights[name] for name in available)
         score = round(
             sum(self.weights[name] * value for name, value in available.items())
-            / total_weight
         )
         risk_level = "low" if score <= 33 else "medium" if score <= 66 else "high"
         return Prediction(
@@ -99,7 +99,7 @@ class RuleBasedRiskModel:
             method_version=self.method_version,
             data_as_of=area.data_as_of,
             explanation={
-                "formula": "weighted average of risk components; drainage risk is 100 minus the drainage quality score, while unavailable zero scores are excluded",
+                "formula": "fixed weighted sum; drainage risk is 100 minus the drainage quality score, while unavailable components contribute zero",
                 "available_components": list(available),
                 "weights_used": {name: self.weights[name] for name in available},
                 "confidence": confidence,
@@ -123,3 +123,29 @@ def rainfall_score(
     if warning_threshold_mm <= 0:
         raise ValueError("warning_threshold_mm must be positive")
     return min(100.0, rainfall_mm / warning_threshold_mm * 100.0)
+
+
+def rainfall_risk(records: list[RainfallRecord], now: datetime | None = None) -> float | None:
+    """Estimate rainfall risk from peak intensity, accumulation, and duration."""
+    valid = [record for record in records if record.rainfall_mm is not None]
+    if not valid:
+        return None
+    reference = now or datetime.now(timezone.utc)
+    window = [
+        record for record in valid
+        if reference - timedelta(hours=3) <= record.observed_at <= reference + timedelta(hours=24)
+    ] or valid[:1]
+    amounts = [max(0.0, float(record.rainfall_mm or 0)) for record in window]
+    peak = max(amounts)
+    accumulated = sum(amounts)
+    wet_slots = sum(amount > 0 for amount in amounts)
+    intensity = 0.0 if peak == 0 else (
+        10.0 if peak < 1 else
+        25.0 if peak < 5 else
+        50.0 if peak < 10 else
+        75.0 if peak < 20 else
+        100.0
+    )
+    accumulation = min(100.0, accumulated / 50.0 * 100.0)
+    duration_bonus = min(20.0, max(0, wet_slots - 1) * 5.0)
+    return round(min(100.0, max(intensity * 0.7 + accumulation * 0.3 + duration_bonus, 0.0)), 2)

@@ -45,6 +45,9 @@ ada; bobot efektifnya dicatat pada `weights_used`, sementara confidence tetap
 diturunkan dan caveat ditampilkan. Nilai yang tidak tersedia tidak diisi
 dengan angka buatan. Pipeline ini adalah baseline rule-based yang dapat
 dijelaskan, bukan machine learning tervalidasi.
+Proxy lingkungan dari elevasi dan kedekatan sungai dibatasi maksimal 70/100
+agar data geografis kasar tidak mendominasi skor atau dibaca sebagai kepastian
+banjir. Jarak sungai lebih dari 1 km tidak menambah skor proxy tersebut.
 
 ### Histori lokasi detail Surabaya
 
@@ -182,7 +185,7 @@ Dengan Laravel dan FastAPI berjalan, terminal ketiga dapat menjalankan worker:
 ```powershell
 cd backend\python
 $env:SIGAB_AREA_SCOPE="sidoarjo-surabaya"
-$env:SIGAB_SYNC_INTERVAL_SECONDS="300"
+$env:SIGAB_SYNC_INTERVAL_SECONDS="10800"
 $env:SIGAB_SYNC_BATCH_SIZE="25"
 $env:SIGAB_AREA_SAMPLE_PER_DISTRICT="0"
 python -m sigab_data.sync
@@ -190,7 +193,7 @@ python -m sigab_data.sync
 
 Jalankan dari `backend\python`.
 Worker ini menemukan semua desa/kelurahan pada cakupan, mengambil ulang BMKG
-setiap 5 menit, membuat/memperbarui area, dan menyimpan rainfall serta
+setiap 3 jam, mengikuti interval pembaruan prakiraan BMKG, membuat/memperbarui area, dan menyimpan rainfall serta
 prediction ke Laravel. Untuk seluruh Indonesia, gunakan
 `SIGAB_AREA_SCOPE=indonesia`, tetapi prosesnya dapat sangat lama dan harus
 mematuhi rate limit serta kebijakan layanan BMKG.
@@ -238,9 +241,10 @@ diperlukan. Jika tetap terkena rate limit, hentikan worker dan tunggu beberapa
 menit sebelum menjalankan ulang.
 
 Setelah satu siklus selesai, worker menunggu `SIGAB_SYNC_INTERVAL_SECONDS` lalu
-mengambil ulang data BMKG secara otomatis. Tidak perlu menjalankan batch manual
-setiap ada perubahan cuaca. Karena fokus mencakup 499 desa/kelurahan, satu
-siklus dapat lebih lama dari 5 menit; interval berikutnya dimulai setelah
+mengambil ulang data BMKG secara otomatis. Nilai bawaan adalah 10.800 detik
+(3 jam), mengikuti interval pembaruan prakiraan BMKG. Tidak perlu menjalankan
+batch manual setiap ada perubahan cuaca. Karena fokus mencakup 499
+desa/kelurahan, satu siklus dapat lebih lama dari 3 jam; interval berikutnya dimulai setelah
 siklus sebelumnya selesai. Data yang sudah masuk ke Laravel tetap dapat dibaca
 frontend selama siklus berikutnya berjalan.
 

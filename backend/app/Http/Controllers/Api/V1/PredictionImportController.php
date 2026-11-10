@@ -214,13 +214,11 @@ class PredictionImportController extends Controller
             return null;
         }
 
-        $totalWeight = 0.0;
         $weightedScore = 0.0;
         foreach ($available as $name => $value) {
-            $totalWeight += $weights[$name];
             $weightedScore += $weights[$name] * (float) $value;
         }
 
-        return (int) round($weightedScore / $totalWeight);
+        return (int) round($weightedScore);
     }
 }

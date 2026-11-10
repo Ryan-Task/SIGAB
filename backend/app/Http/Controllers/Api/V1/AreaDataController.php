@@ -3,9 +3,12 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Http;
 
 class AreaDataController extends Controller
 {
@@ -68,11 +71,20 @@ class AreaDataController extends Controller
             ->where('area_id', $area->id)
             ->latest('calculated_at')
             ->first();
+        $predictionPayload = $prediction === null
+            ? null
+            : Cache::remember(
+                sprintf('area-risk-realtime:%s:%s', $area->id, $prediction->id),
+                now()->addMinutes(5),
+                function () use ($area, $prediction): array {
+                    return $this->realtimePredictionPayload($prediction, $this->fetchCurrentWeather($area));
+                },
+            );
 
         return response()->json([
             'data' => [
                 'area' => $this->areaPayload($area),
-                'prediction' => $prediction === null ? null : $this->predictionPayload($prediction),
+                'prediction' => $predictionPayload,
             ],
         ]);
     }
@@ -80,7 +92,7 @@ class AreaDataController extends Controller
     public function rainfall(Request $request, string $slug): JsonResponse
     {
         $area = $this->findArea($slug);
-        $query = DB::table('rainfall_records')
+        $baseQuery = DB::table('rainfall_records')
             ->where('area_id', $area->id)
             ->select([
                 'observed_at',
@@ -89,17 +101,26 @@ class AreaDataController extends Controller
                 'quality_status',
                 'data_source_id',
                 'raw_metadata',
-            ])
-            ->orderByDesc('observed_at');
+                'updated_at',
+            ]);
 
         if ($request->filled('from')) {
-            $query->where('observed_at', '>=', $request->date('from')->startOfDay());
+            $baseQuery->where('observed_at', '>=', $request->date('from')->startOfDay());
         }
         if ($request->filled('to')) {
-            $query->where('observed_at', '<=', $request->date('to')->endOfDay());
+            $baseQuery->where('observed_at', '<=', $request->date('to')->endOfDay());
         }
 
-        $records = $query->paginate(min($request->integer('per_page', 50), 100));
+        $records = (clone $baseQuery)
+            ->where('observed_at', '>=', now()->subHours(3))
+            ->orderBy('observed_at')
+            ->paginate(min($request->integer('per_page', 8), 8));
+        if ($records->isEmpty()) {
+            $records = (clone $baseQuery)
+                ->orderByDesc('observed_at')
+                ->paginate(min($request->integer('per_page', 8), 8));
+            $records->setCollection($records->getCollection()->sortBy('observed_at')->values());
+        }
         $records->getCollection()->transform(function (object $record): array {
             $metadata = $record->raw_metadata === null ? [] : json_decode($record->raw_metadata, true);
             return [
@@ -107,11 +128,116 @@ class AreaDataController extends Controller
                 'period_hours' => $record->period_hours,
                 'rainfall_mm' => $record->rainfall_mm,
                 'rainfall_probability' => is_array($metadata) ? ($metadata['pp'] ?? null) : null,
+                'weather_code' => is_array($metadata) ? ($metadata['weather'] ?? null) : null,
+                'weather_description' => is_array($metadata) ? ($metadata['weather_desc'] ?? null) : null,
+                'fetched_at' => $record->updated_at,
                 'quality_status' => $record->quality_status,
             ];
         });
 
         return response()->json(['data' => $records]);
+    }
+
+    public function currentWeather(string $slug): JsonResponse
+    {
+        $area = $this->findArea($slug);
+        abort_if($area->centroid_lat === null || $area->centroid_lng === null, 422, 'Area coordinates are unavailable.');
+
+        $weather = $this->fetchCurrentWeather($area);
+        if ($weather === null) {
+            return response()->json(['message' => 'Current weather provider is unavailable.'], 502);
+        }
+
+        return response()->json(['data' => $weather]);
+    }
+
+    private function fetchCurrentWeather(object $area): ?array
+    {
+        if ($area->centroid_lat === null || $area->centroid_lng === null) {
+            return null;
+        }
+
+        $cacheKey = sprintf('area-current-weather:%s:%s', $area->centroid_lat, $area->centroid_lng);
+        $cached = Cache::get($cacheKey);
+        if (is_array($cached)) {
+            return $cached;
+        }
+
+        try {
+            $response = Http::timeout(10)->retry(2, 200)->get('https://api.open-meteo.com/v1/forecast', [
+                'latitude' => $area->centroid_lat,
+                'longitude' => $area->centroid_lng,
+                'current' => 'precipitation,rain,showers,weather_code',
+                'hourly' => 'precipitation,weather_code',
+                'past_days' => 1,
+                'forecast_days' => 2,
+                'timezone' => 'Asia/Jakarta',
+            ]);
+        } catch (ConnectionException) {
+            return null;
+        }
+        if ($response->failed()) {
+            return null;
+        }
+
+        $payload = $response->json();
+        $current = is_array($payload['current'] ?? null) ? $payload['current'] : [];
+        $times = $payload['hourly']['time'] ?? [];
+        $precipitation = $payload['hourly']['precipitation'] ?? [];
+        $currentTime = isset($current['time']) ? strtotime((string) $current['time']) : time();
+        $currentIndex = 0;
+        $closestDistance = PHP_INT_MAX;
+        foreach ($times as $index => $time) {
+            $distance = abs(strtotime((string) $time) - $currentTime);
+            if ($distance < $closestDistance) {
+                $closestDistance = $distance;
+                $currentIndex = $index;
+            }
+        }
+        $isWet = static fn (int $index): bool => isset($precipitation[$index]) && (float) $precipitation[$index] > 0.1;
+        $start = $currentIndex;
+        $end = $currentIndex;
+        if ($isWet($currentIndex)) {
+            while ($start > 0 && $isWet($start - 1)) {
+                $start--;
+            }
+            while ($end + 1 < count($times) && $isWet($end + 1)) {
+                $end++;
+            }
+        }
+        $currentPrecipitation = (float) ($current['precipitation'] ?? 0);
+        $durationHours = $isWet($currentIndex) ? $end - $start + 1 : 0;
+        $intensityScore = $currentPrecipitation <= 0.1 ? 0
+            : ($currentPrecipitation < 1 ? 10
+                : ($currentPrecipitation < 5 ? 25
+                    : ($currentPrecipitation < 10 ? 50
+                        : ($currentPrecipitation < 20 ? 75 : 100))));
+        $rainScore = $isWet($currentIndex)
+            ? round(min(100, ($intensityScore * 0.7) + min(30, $durationHours * 5)), 2)
+            : 0;
+
+        $weather = [
+            'provider' => 'Open-Meteo',
+            'source_type' => 'near_realtime_model',
+            'fetched_at' => now()->toIso8601String(),
+            'current' => [
+                'time' => $current['time'] ?? null,
+                'precipitation_mm' => $current['precipitation'] ?? 0,
+                'rain_mm' => $current['rain'] ?? 0,
+                'showers_mm' => $current['showers'] ?? 0,
+                'weather_code' => $current['weather_code'] ?? null,
+                'is_raining' => $isWet($currentIndex),
+                'rain_score' => $rainScore,
+            ],
+            'rain_window' => [
+                'start_at' => $isWet($currentIndex) ? ($times[$start] ?? null) : null,
+                'end_at' => $isWet($currentIndex) ? ($times[$end] ?? null) : null,
+                'duration_hours' => $durationHours,
+            ],
+        ];
+        Cache::put($cacheKey, $weather, now()->addMinutes(5));
+
+        return $weather;
     }
 
     public function latestPredictions(): JsonResponse
@@ -326,6 +452,84 @@ class AreaDataController extends Controller
             'status' => $prediction->status,
             'explanation' => $this->riskExplanation($prediction),
         ];
+    }
+
+    private function realtimePredictionPayload(object $prediction, ?array $currentWeather): array
+    {
+        $payload = $this->predictionPayload($prediction);
+        if ($currentWeather === null) {
+            $payload['realtime_calculated_at'] = null;
+            return $payload;
+        }
+
+        $currentWeatherScore = (float) ($currentWeather['current']['rain_score'] ?? 0);
+        $components = [
+            'rainfall' => $prediction->rainfall_score,
+            'current_weather' => $currentWeatherScore,
+            'history' => $prediction->history_score,
+            'environment' => $prediction->environment_score,
+            'drainage' => $prediction->drainage_score === null
+                ? null
+                : 100 - (float) $prediction->drainage_score,
+        ];
+        $weights = [
+            'rainfall' => 0.30,
+            'current_weather' => 0.30,
+            'history' => 0.25,
+            'environment' => 0.05,
+            'drainage' => 0.10,
+        ];
+        $available = array_filter($components, static fn ($value): bool => $value !== null);
+        $score = $available !== []
+            ? (int) round(array_sum(array_map(
+                static fn (string $name, $value): float => $weights[$name] * (float) $value,
+                array_keys($available),
+                array_values($available),
+            )))
+            : null;
+
+        $explanation = $payload['explanation'] ?? [];
+        if (! is_array($explanation)) {
+            $explanation = [];
+        }
+        $availableComponents = $explanation['available_components'] ?? [];
+        if (! is_array($availableComponents)) {
+            $availableComponents = [];
+        }
+        if (! in_array('current_weather', $availableComponents, true)) {
+            $availableComponents[] = 'current_weather';
+        }
+        $sources = $explanation['sources'] ?? [];
+        if (! is_array($sources)) {
+            $sources = [];
+        }
+        $sources['current_weather'] = [
+            'provider' => 'Open-Meteo',
+            'url' => 'https://open-meteo.com/',
+            'status' => 'available',
+            'method' => 'near_realtime_model',
+            'fetched_at' => $currentWeather['fetched_at'] ?? null,
+            'score' => $currentWeatherScore,
+            'rain_duration_hours' => $currentWeather['rain_window']['duration_hours'] ?? 0,
+            'rain_start_at' => $currentWeather['rain_window']['start_at'] ?? null,
+            'rain_end_at' => $currentWeather['rain_window']['end_at'] ?? null,
+        ];
+        $explanation['available_components'] = $availableComponents;
+        $explanation['weights_used'] = array_intersect_key($weights, $available);
+        $explanation['formula'] = 'fixed weighted sum; unavailable components contribute 0 and are not promoted to represent missing risk data';
+        $explanation['sources'] = $sources;
+        $explanation['realtime'] = true;
+        $explanation['realtime_caveat'] = 'Skor diperbarui saat halaman meminta data. Open-Meteo adalah model cuaca near-real-time, bukan pengukuran sensor langsung.';
+
+        $payload['score'] = $score;
+        $payload['risk_level'] = $score === null
+            ? 'insufficient'
+            : ($score <= 33 ? 'low' : ($score <= 66 ? 'medium' : 'high'));
+        $payload['current_weather_score'] = $currentWeatherScore;
+        $payload['realtime_calculated_at'] = now()->toIso8601String();
+        $payload['explanation'] = $explanation;
+
+        return $payload;
     }
 
     private function riskExplanation(object $prediction, bool $rainfallAvailable = false): ?array

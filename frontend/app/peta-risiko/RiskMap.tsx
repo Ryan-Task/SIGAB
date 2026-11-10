@@ -79,7 +79,7 @@ export default function RiskMap({ areas, selectedArea, onSelect }: Props) {
       }).addTo(layers);
 
       const marker = L.circleMarker(center, {
-        radius: selectedArea?.slug === zone.representative.slug ? 12 : 9,
+        radius: zone.areas.some((area) => area.slug === selectedArea?.slug) ? 12 : 9,
         color: "#ffffff",
         weight: 3,
         fillColor: zone.representative.tone,
@@ -101,11 +101,6 @@ export default function RiskMap({ areas, selectedArea, onSelect }: Props) {
       marker.on("click", () => onSelect(zone.representative));
     });
 
-    if (positioned.length > 0) {
-      const bounds = L.latLngBounds(positioned.map((zone) => [zone.latitude, zone.longitude]));
-      map.fitBounds(bounds, { padding: [20, 20], maxZoom: 12 });
-    }
-
     return () => {
       layers.remove();
     };
@@ -113,8 +108,17 @@ export default function RiskMap({ areas, selectedArea, onSelect }: Props) {
 
   useEffect(() => {
     const map = mapRef.current;
+    const positioned = areas.filter((zone) => Number.isFinite(zone.latitude) && Number.isFinite(zone.longitude));
+    if (map && positioned.length > 0) {
+      const bounds = L.latLngBounds(positioned.map((zone) => [zone.latitude, zone.longitude]));
+      map.fitBounds(bounds, { padding: [20, 20], maxZoom: 12 });
+    }
+  }, [areas]);
+
+  useEffect(() => {
+    const map = mapRef.current;
     if (map && selectedArea?.centroid_lat && selectedArea.centroid_lng) {
-      map.setView([Number(selectedArea.centroid_lat), Number(selectedArea.centroid_lng)], Math.max(map.getZoom(), 12), { animate: true });
+      map.setView([Number(selectedArea.centroid_lat), Number(selectedArea.centroid_lng)], Math.max(map.getZoom(), 14), { animate: true });
     }
   }, [selectedArea]);
 

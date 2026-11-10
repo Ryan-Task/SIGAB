@@ -14,7 +14,7 @@ from .environment import (
     fetch_river_distances,
 )
 from .models import AreaInput
-from .risk import RuleBasedRiskModel, rainfall_score
+from .risk import RuleBasedRiskModel, rainfall_risk
 from .regions import RegionDiscoveryError, discover_area_codes
 
 app = FastAPI(
@@ -94,7 +94,7 @@ def predict(request: PredictionRequest) -> PredictionResponse:
                     elevation = environment_scores[code].get("score")
                     distance = river.get("river_distance_m")
                     river_score = (
-                        max(0.0, min(100.0, (5000.0 - float(distance)) / 5000.0 * 100.0))
+                        max(0.0, min(70.0, (1000.0 - float(distance)) / 1000.0 * 70.0))
                         if distance is not None else None
                     )
                     components = [value for value in (elevation, river_score) if value is not None]
@@ -119,6 +119,26 @@ def predict(request: PredictionRequest) -> PredictionResponse:
                 (record.rainfall_mm for record in area_records if record.rainfall_mm is not None),
                 None,
             )
+            rainfall_component = rainfall_risk(area_records)
+            wet_records = [
+                record for record in area_records
+                if record.rainfall_mm is not None and float(record.rainfall_mm) > 0
+            ]
+            rain_start = min((record.observed_at for record in wet_records), default=None)
+            rain_end = max((record.observed_at for record in wet_records), default=None)
+            rain_end_record = next(
+                (record for record in wet_records if record.observed_at == rain_end),
+                None,
+            )
+            rain_duration_hours = (
+                round(
+                    (rain_end - rain_start).total_seconds() / 3600
+                    + (rain_end_record.period_hours or 0),
+                    1,
+                )
+                if rain_start is not None and rain_end is not None and rain_end_record is not None
+                else 0
+            )
             environment = environment_scores.get(area_code)
             environment_score = (
                 request.environment_score
@@ -139,7 +159,7 @@ def predict(request: PredictionRequest) -> PredictionResponse:
                 drainage_score = None
             component_metadata = {
                 "rainfall": {
-                    "quality_score": 0.8 if latest is not None else 0.0,
+                    "quality_score": 0.8 if rainfall_component is not None else 0.0,
                     "coverage_score": 1.0,
                     "age_score": 0.8 if latest is not None else 0.0,
                 },
@@ -162,7 +182,7 @@ def predict(request: PredictionRequest) -> PredictionResponse:
             prediction = model.predict(
                 AreaInput(
                     area_code=area_code,
-                    rainfall_score=rainfall_score(latest),
+                    rainfall_score=rainfall_component,
                     history_score=request.history_score,
                     environment_score=environment_score,
                     drainage_score=drainage_score,
@@ -176,6 +196,21 @@ def predict(request: PredictionRequest) -> PredictionResponse:
                     "provider": "BMKG",
                     "url": "https://api.bmkg.go.id/publik/prakiraan-cuaca",
                     "status": "available" if latest is not None else "unavailable",
+                    "peak_mm": max(
+                        (float(record.rainfall_mm) for record in area_records if record.rainfall_mm is not None),
+                        default=None,
+                    ),
+                    "accumulated_mm": round(
+                        sum(float(record.rainfall_mm) for record in area_records if record.rainfall_mm is not None), 2
+                    ),
+                    "wet_slots": sum(
+                        1 for record in area_records
+                        if record.rainfall_mm is not None and float(record.rainfall_mm) > 0
+                    ),
+                    "rain_start_at": rain_start.isoformat() if rain_start else None,
+                    "rain_end_at": rain_end.isoformat() if rain_end else None,
+                    "rain_duration_hours": rain_duration_hours,
+                    "fetched_at": datetime.now(timezone.utc).isoformat(),
                 },
                 "history": {
                     "provider": "DIBI BNPB",

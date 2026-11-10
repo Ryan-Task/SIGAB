@@ -3,8 +3,8 @@ from datetime import datetime, timezone
 
 from sigab_data.bmkg import _area_metadata, parse_forecast_payload
 from sigab_data.environment import _distance_to_segment_meters
-from sigab_data.models import AreaInput
-from sigab_data.risk import RuleBasedRiskModel, rainfall_score
+from sigab_data.models import AreaInput, RainfallRecord
+from sigab_data.risk import RuleBasedRiskModel, rainfall_risk, rainfall_score
 
 
 class PipelineTest(unittest.TestCase):
@@ -27,24 +27,24 @@ class PipelineTest(unittest.TestCase):
         self.assertEqual(records[1].quality_status, "forecast")
         self.assertEqual(records[0].observed_at.tzinfo, timezone.utc)
 
-    def test_risk_normalizes_available_weights(self):
+    def test_risk_keeps_fixed_weights_for_available_components(self):
         prediction = RuleBasedRiskModel().predict(
             AreaInput(area_code="x", rainfall_score=80, history_score=40)
         )
-        self.assertEqual(prediction.score, 62)
+        self.assertEqual(prediction.score, 50)
         self.assertEqual(prediction.risk_level, "medium")
         self.assertEqual(prediction.status, "valid")
 
-    def test_weather_only_score_is_explicitly_limited(self):
+    def test_weather_only_score_does_not_represent_missing_components(self):
         prediction = RuleBasedRiskModel().predict(
             AreaInput(area_code="x", rainfall_score=80)
         )
-        self.assertEqual(prediction.score, 80)
-        self.assertEqual(prediction.risk_level, "high")
+        self.assertEqual(prediction.score, 36)
+        self.assertEqual(prediction.risk_level, "medium")
         self.assertEqual(prediction.status, "valid")
         self.assertEqual(prediction.explanation["confidence"], "limited")
 
-    def test_good_drainage_quality_reduces_drainage_risk(self):
+    def test_missing_drainage_does_not_inflate_other_risk_components(self):
         good = RuleBasedRiskModel().predict(
             AreaInput(area_code="x", rainfall_score=50, drainage_score=100)
         )
@@ -55,7 +55,7 @@ class PipelineTest(unittest.TestCase):
         self.assertIsNone(poor.drainage_score)
         self.assertEqual(poor.explanation["available_components"], ["rainfall"])
         self.assertEqual(good.explanation["available_components"], ["rainfall", "drainage"])
-        self.assertLess(good.score, poor.score)
+        self.assertEqual(good.score, poor.score)
 
     def test_confidence_accounts_for_quality_not_only_component_count(self):
         prediction = RuleBasedRiskModel().predict(
@@ -74,6 +74,19 @@ class PipelineTest(unittest.TestCase):
 
     def test_rainfall_score_is_clamped(self):
         self.assertEqual(rainfall_score(75, 50), 100)
+
+    def test_rainfall_risk_accounts_for_intensity_and_duration(self):
+        records = [
+            RainfallRecord("x", datetime(2026, 11, 1, 0, tzinfo=timezone.utc), 3, 0.2, "forecast", "BMKG", {}),
+            RainfallRecord("x", datetime(2026, 11, 1, 3, tzinfo=timezone.utc), 3, 0.2, "forecast", "BMKG", {}),
+        ]
+        short = rainfall_risk(records, datetime(2026, 11, 1, 0, tzinfo=timezone.utc))
+        heavy = rainfall_risk(
+            [RainfallRecord("x", records[0].observed_at, 3, 20, "forecast", "BMKG", {})],
+            datetime(2026, 11, 1, 0, tzinfo=timezone.utc),
+        )
+        self.assertGreater(short, 0)
+        self.assertGreater(heavy, short)
 
     def test_bmkg_area_metadata_is_available_for_auto_registration(self):
         area = _area_metadata(

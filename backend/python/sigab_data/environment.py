@@ -246,8 +246,8 @@ def fetch_elevation_scores(
                 "score": None,
             }
             continue
-        # Lower elevation is a transparent, coarse flood susceptibility proxy.
-        score = round(max(0.0, min(100.0, (200.0 - float(elevation)) / 200.0 * 100.0)), 2)
+        # Keep this coarse elevation proxy from dominating the risk score.
+        score = round(max(0.0, min(70.0, (200.0 - float(elevation)) / 200.0 * 100.0)), 2)
         scores[str(area["code"])] = {
             **base_metadata,
             "status": "available",

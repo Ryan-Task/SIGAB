@@ -22,6 +22,8 @@ export type ApiPrediction = {
   province_code: string | null;
   province_name: string | null;
   score: number | null;
+  current_weather_score?: number | null;
+  realtime_calculated_at?: string | null;
   risk_level: "low" | "medium" | "high" | "insufficient";
   status: string;
   data_as_of: string | null;
@@ -54,6 +56,12 @@ export type ApiRiskExplanation = {
     method?: string;
     elevation_m?: number | null;
     fetched_at?: string | null;
+    peak_mm?: number | null;
+    accumulated_mm?: number | null;
+    wet_slots?: number | null;
+    rain_start_at?: string | null;
+    rain_end_at?: string | null;
+    rain_duration_hours?: number | null;
     latitude?: number | null;
     longitude?: number | null;
     response_latitude?: number | null;
@@ -74,6 +82,8 @@ export type ApiRiskExplanation = {
 export type ApiRiskPrediction = {
   id: number;
   score: number | null;
+  current_weather_score?: number | null;
+  realtime_calculated_at?: string | null;
   risk_level: "low" | "medium" | "high" | "insufficient";
   rainfall_score: string | null;
   history_score: string | null;
@@ -145,20 +155,48 @@ export async function getAreaRisk(slug: string): Promise<{ area: ApiArea; predic
   return response.data;
 }
 
-export async function getAreaRainfall(slug: string): Promise<Paginated<{
+export type ApiRainfallRecord = {
   observed_at: string;
   period_hours: number | null;
   rainfall_mm: string | null;
   rainfall_probability: number | string | null;
+  weather_code: number | string | null;
+  weather_description: string | null;
+  fetched_at: string | null;
   quality_status: string;
-}>> {
-  const response = await getJson<{ data: Paginated<{
-    observed_at: string;
-    period_hours: number | null;
-    rainfall_mm: string | null;
-    rainfall_probability: number | string | null;
-    quality_status: string;
-  }> }>(`/v1/areas/${encodeURIComponent(slug)}/rainfall?per_page=100`);
+};
+
+export async function getAreaRainfall(slug: string): Promise<Paginated<ApiRainfallRecord>> {
+  const response = await getJson<{ data: Paginated<ApiRainfallRecord> }>(
+    `/v1/areas/${encodeURIComponent(slug)}/rainfall?per_page=8`,
+  );
+  return response.data;
+}
+
+export type ApiCurrentWeather = {
+  provider: string;
+  source_type: string;
+  fetched_at: string;
+  current: {
+    time: string | null;
+    precipitation_mm: number;
+    rain_mm: number;
+    showers_mm: number;
+    weather_code: number | null;
+    is_raining: boolean;
+    rain_score: number;
+  };
+  rain_window: {
+    start_at: string | null;
+    end_at: string | null;
+    duration_hours: number;
+  };
+};
+
+export async function getAreaCurrentWeather(slug: string): Promise<ApiCurrentWeather> {
+  const response = await getJson<{ data: ApiCurrentWeather }>(
+    `/v1/areas/${encodeURIComponent(slug)}/current-weather`,
+  );
   return response.data;
 }
 

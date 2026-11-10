@@ -8,7 +8,7 @@ from pathlib import Path
 
 from .bmkg import BMKGClient, BMKGError
 from .models import AreaInput
-from .risk import RuleBasedRiskModel, rainfall_score
+from .risk import RuleBasedRiskModel, rainfall_risk
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -41,12 +41,10 @@ def main() -> int:
             area_records, area = client.fetch_forecast_with_area(area_code)
             areas.append(area)
             records.extend(record.to_dict() for record in area_records)
-            values = [record.rainfall_mm for record in area_records if record.rainfall_mm is not None]
-            latest_rainfall = values[0] if values else None
             prediction = model.predict(
                 AreaInput(
                     area_code=area_code,
-                    rainfall_score=rainfall_score(latest_rainfall),
+                    rainfall_score=rainfall_risk(area_records),
                     history_score=args.history_score,
                     environment_score=args.environment_score,
                     data_as_of=datetime.now(timezone.utc),

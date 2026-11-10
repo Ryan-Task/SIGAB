@@ -2,9 +2,9 @@
 
 import { motion } from "framer-motion";
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import SiteNav from "../components/SiteNav";
-import { getLatestPredictions, type ApiPrediction } from "../../lib/api";
+import { getAreaRisk, getLatestPredictions, type ApiPrediction } from "../../lib/api";
 import type { MapZone } from "./RiskMap";
 import dynamic from "next/dynamic";
 
@@ -29,6 +29,20 @@ function toRiskArea(prediction: ApiPrediction): RiskArea {
     level,
     tone: level === "Tinggi" ? "#f38a50" : level === "Sedang" ? "#82d4d0" : "#26669a",
   };
+}
+
+function withRealtimePrediction(area: RiskArea, prediction: Awaited<ReturnType<typeof getAreaRisk>>["prediction"]): RiskArea {
+  if (prediction === null) return area;
+  return toRiskArea({
+    ...area,
+    score: prediction.score,
+    risk_level: prediction.risk_level,
+    status: prediction.status,
+    explanation: prediction.explanation,
+    calculated_at: prediction.realtime_calculated_at ?? prediction.calculated_at,
+    current_weather_score: prediction.current_weather_score,
+    realtime_calculated_at: prediction.realtime_calculated_at,
+  });
 }
 
 function regencyLabel(area: Pick<ApiPrediction, "regency_code" | "regency_name">): string {
@@ -125,6 +139,10 @@ function Footer() {
 }
 
 export default function PetaRisikoPage() {
+  const realtimeCacheRef = useRef(new Map<string, {
+    prediction: Awaited<ReturnType<typeof getAreaRisk>>["prediction"];
+    expiresAt: number;
+  }>());
   const [riskAreas, setRiskAreas] = useState<RiskArea[]>([]);
   const [selectedArea, setSelectedArea] = useState<RiskArea | null>(null);
   const [filter, setFilter] = useState<"Semua" | RiskLevel>("Semua");
@@ -133,21 +151,104 @@ export default function PetaRisikoPage() {
   const [selectedAreaSearch, setSelectedAreaSearch] = useState("");
   const [sort, setSort] = useState<"risk" | "name">("risk");
   const [search, setSearch] = useState("");
-  const [pageSize, setPageSize] = useState<5 | 10 | 20>(5);
+  const [pageSize, setPageSize] = useState<5 | 10>(5);
   const [page, setPage] = useState(1);
   const [error, setError] = useState<string | null>(null);
+  const [selectedRealtimeLoading, setSelectedRealtimeLoading] = useState(false);
+  const [loadingSlugs, setLoadingSlugs] = useState<Set<string>>(new Set());
+  const [realtimeReadySlugs, setRealtimeReadySlugs] = useState<Set<string>>(new Set());
+  const [selectedRefreshToken, setSelectedRefreshToken] = useState(0);
+  const latestLoadTokenRef = useRef(0);
+  const getCachedRisk = (slug: string) => {
+    const cached = realtimeCacheRef.current.get(slug);
+    if (cached && cached.expiresAt > Date.now()) {
+      return Promise.resolve({ prediction: cached.prediction });
+    }
+    return getAreaRisk(slug).then((result) => {
+      realtimeCacheRef.current.set(slug, {
+        prediction: result.prediction,
+        expiresAt: Date.now() + 300_000,
+      });
+      return result;
+    });
+  };
+  const selectArea = (area: RiskArea) => {
+    const cached = realtimeCacheRef.current.get(area.slug);
+    setSelectedArea(cached && cached.expiresAt > Date.now()
+      ? withRealtimePrediction(area, cached.prediction)
+      : { ...area, score: null });
+    if (cached && cached.expiresAt > Date.now()) {
+      setRealtimeReadySlugs((current) => new Set(current).add(area.slug));
+    } else {
+      setRealtimeReadySlugs((current) => {
+        const next = new Set(current);
+        next.delete(area.slug);
+        return next;
+      });
+    }
+    setSelectedRefreshToken((token) => token + 1);
+  };
   useEffect(() => {
-    const load = () => getLatestPredictions()
+    const load = () => {
+      const loadToken = latestLoadTokenRef.current + 1;
+      latestLoadTokenRef.current = loadToken;
+      return getLatestPredictions()
       .then((predictions) => {
-        const areas = predictions.map(toRiskArea);
+        if (loadToken !== latestLoadTokenRef.current) return;
+        const areas = predictions.map(toRiskArea).map((area) => {
+          const cached = realtimeCacheRef.current.get(area.slug);
+          return cached && cached.expiresAt > Date.now()
+            ? withRealtimePrediction(area, cached.prediction)
+            : area;
+        });
         setRiskAreas(areas);
-        setSelectedArea((current) => current ?? areas[0] ?? null);
+        setRealtimeReadySlugs(new Set(
+          areas
+            .filter((area) => {
+              const cached = realtimeCacheRef.current.get(area.slug);
+              return cached !== undefined && cached.expiresAt > Date.now();
+            })
+            .map((area) => area.slug),
+        ));
+        setSelectedArea((current) => current
+          ? areas.find((area) => area.slug === current.slug) ?? areas[0] ?? null
+          : areas[0] ?? null);
       })
-      .catch(() => setError("Data risiko belum dapat dimuat. Pastikan server Laravel aktif."));
+      .catch(() => {
+        if (loadToken === latestLoadTokenRef.current) {
+          setError("Data risiko belum dapat dimuat. Pastikan server Laravel aktif.");
+        }
+      });
+    };
     load();
     const refresh = window.setInterval(load, 300_000);
     return () => window.clearInterval(refresh);
   }, []);
+  useEffect(() => {
+    if (!selectedArea) return;
+    let active = true;
+    setSelectedRealtimeLoading(true);
+    getCachedRisk(selectedArea.slug)
+      .then(({ prediction }) => {
+        if (!active) return;
+        setSelectedRealtimeLoading(false);
+        if (prediction === null) return;
+        setRiskAreas((areas) => areas.map((area) => area.slug === selectedArea.slug
+          ? withRealtimePrediction(area, prediction)
+          : area));
+        setRealtimeReadySlugs((slugs) => new Set(slugs).add(selectedArea.slug));
+        setSelectedArea((area) => area?.slug === selectedArea.slug
+          ? withRealtimePrediction(area, prediction)
+          : area);
+      })
+      .catch(() => {
+        if (active) {
+          setSelectedRealtimeLoading(false);
+          setError("Skor risiko banjir real-time belum dapat diperbarui.");
+        }
+      });
+    return () => { active = false; };
+  }, [selectedArea?.slug, selectedRefreshToken]);
   useEffect(() => {
     setPage(1);
   }, [filter, regency, search, pageSize]);
@@ -178,9 +279,79 @@ export default function PetaRisikoPage() {
   const selectedExactMatch = selectedOptions.some((area) => area.name.toLowerCase() === selectedAreaSearch.trim().toLowerCase());
   const paginationItems = getPaginationItems(page, totalPages);
   const mapZones = createMapZones(visibleAreas);
+  const pagedSlugsKey = pagedAreas.map((area) => area.slug).join("|");
   useEffect(() => {
     setPage((currentPage) => Math.min(currentPage, totalPages));
   }, [totalPages]);
+  useEffect(() => {
+    let active = true;
+    const slugs = pagedSlugsKey ? pagedSlugsKey.split("|") : [];
+    if (slugs.length === 0) return () => { active = false; };
+    setLoadingSlugs(new Set(slugs));
+    setRealtimeReadySlugs((current) => {
+      const next = new Set(current);
+      slugs.forEach((slug) => next.delete(slug));
+      return next;
+    });
+    Promise.all(slugs.map((slug) => getCachedRisk(slug)
+      .then(({ prediction }) => ({ slug, prediction, error: false }))
+      .catch(() => ({ slug, prediction: null, error: true }))))
+      .then((results) => {
+        if (!active) return;
+        setLoadingSlugs((current) => {
+          const next = new Set(current);
+          slugs.forEach((slug) => next.delete(slug));
+          return next;
+        });
+        setRealtimeReadySlugs((current) => {
+          const next = new Set(current);
+          results.forEach((result) => {
+            if (result.prediction !== null) next.add(result.slug);
+          });
+          return next;
+        });
+        const realtimeBySlug = new Map(
+          results
+            .filter((result) => result.prediction !== null)
+            .map((result) => [result.slug, result.prediction] as const),
+        );
+        if (results.some((result) => result.error)) {
+          setError("Sebagian skor risiko banjir real-time belum dapat diperbarui.");
+        }
+        if (realtimeBySlug.size === 0) return;
+        setRiskAreas((areas) => areas.map((area) => {
+          const prediction = realtimeBySlug.get(area.slug);
+          if (prediction === undefined || prediction === null) return area;
+          return {
+            ...withRealtimePrediction(area, prediction),
+          };
+        }));
+        setSelectedArea((area) => {
+          if (!area) return area;
+          const prediction = realtimeBySlug.get(area.slug);
+          if (prediction === undefined || prediction === null) return area;
+          return {
+            ...area,
+            score: prediction.score,
+            risk_level: prediction.risk_level,
+            status: prediction.status,
+            explanation: prediction.explanation,
+            calculated_at: prediction.realtime_calculated_at ?? prediction.calculated_at,
+          };
+        });
+      })
+      .catch(() => {
+        if (active) {
+          setLoadingSlugs((current) => {
+            const next = new Set(current);
+            slugs.forEach((slug) => next.delete(slug));
+            return next;
+          });
+          setError("Sebagian skor risiko banjir real-time belum dapat diperbarui.");
+        }
+      });
+    return () => { active = false; };
+  }, [page, pageSize, filter, regency, search, sort, riskAreas.length]);
 
   return (
     <main className="min-h-screen bg-[#dfeaf0] text-slate-800">
@@ -195,7 +366,7 @@ export default function PetaRisikoPage() {
                 Peta risiko,<br />dibuat mudah dipahami.
               </h1>
               <p className="mt-6 max-w-xl text-base leading-8 text-slate-600">
-                Jelajahi gambaran risiko banjir per wilayah. Pilih area untuk melihat status, skor estimasi, dan faktor yang perlu diperhatikan.
+                Jelajahi gambaran risiko banjir per wilayah. Pilih area untuk melihat status, skor risiko banjir, dan faktor yang perlu diperhatikan.
               </p>
             </div>
             <div className="flex items-center gap-3 text-sm text-slate-500">
@@ -225,7 +396,13 @@ export default function PetaRisikoPage() {
               <span className="rounded-full bg-[#f38a50] px-3 py-1.5 text-xs font-bold text-[#123d61]">Waspada</span>
             </div>
             <div className="relative z-10 mt-10 h-[375px]">
-              <RiskMap areas={mapZones} selectedArea={selectedArea} onSelect={setSelectedArea} />
+              <RiskMap areas={mapZones} selectedArea={selectedArea} onSelect={selectArea} />
+              {selectedArea && (
+                <div className="absolute left-3 top-3 max-w-[calc(100%-1.5rem)] rounded-2xl border border-[#82d4d0]/60 bg-[#123d61]/90 px-4 py-3 text-white shadow-lg backdrop-blur-md">
+                  <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-[#82d4d0]">Area aktif di peta</p>
+                  <p className="mt-1 truncate text-sm font-semibold">{selectedArea.name}</p>
+                </div>
+              )}
               <div className="absolute bottom-3 left-3 rounded-2xl border border-white/20 bg-[#123d61]/60 p-4 text-xs text-sky-100 backdrop-blur-md">
                 {mapZones.length} zona, radius 1 km. Geser peta, zoom, atau klik zona untuk melihat risiko
               </div>
@@ -276,7 +453,7 @@ export default function PetaRisikoPage() {
                   area.regency_code === selectedRegency &&
                   area.name.toLowerCase() === value.trim().toLowerCase(),
                 );
-                if (selected) setSelectedArea(selected);
+                if (selected) selectArea(selected);
               }}
               placeholder={selectedRegency === "Semua" ? "Pilih kabupaten/kota terlebih dahulu" : "Ketik nama wilayah..."}
               className="mt-2 w-full rounded-xl border-0 bg-white px-4 py-3 text-sm text-[#123d61] outline-none disabled:cursor-not-allowed disabled:bg-slate-200"
@@ -289,7 +466,7 @@ export default function PetaRisikoPage() {
                     key={area.slug}
                     type="button"
                     onClick={() => {
-                      setSelectedArea(area);
+                      selectArea(area);
                       setSelectedAreaSearch(area.name);
                     }}
                     className="block w-full rounded-lg px-3 py-2 text-left text-xs text-[#123d61] hover:bg-[#dfeaf0]"
@@ -303,8 +480,13 @@ export default function PetaRisikoPage() {
             {!selectedArea && !error && <p className="mt-4 text-sm text-slate-600">Memuat data risiko...</p>}
             {selectedArea && <>
             <div className="mt-4 flex items-end justify-between gap-3">
-              <h2 className="text-3xl font-semibold tracking-[-0.06em] text-[#123d61]">{selectedArea.name}</h2>
-              <span className={`rounded-full px-3 py-1 text-xs font-bold ${riskColors[selectedArea.level]}`}>{selectedArea.level}</span>
+              <div>
+                <p className="mb-1 text-[10px] font-bold uppercase tracking-[0.18em] text-[#26669a]">Sedang melihat area</p>
+                <h2 className="text-3xl font-semibold tracking-[-0.06em] text-[#123d61]">{selectedArea.name}</h2>
+              </div>
+              <span className={`rounded-full px-3 py-1 text-xs font-bold ${riskColors[selectedArea.level]}`}>
+                {selectedRealtimeLoading ? "Memuat…" : selectedArea.level}
+              </span>
             </div>
             <p className="mt-3 text-sm text-slate-600">{selectedArea.detail}</p>
             {selectedArea.explanation?.caveat && <p className="mt-2 text-xs leading-5 text-slate-500">{selectedArea.explanation.caveat}</p>}
@@ -318,8 +500,13 @@ export default function PetaRisikoPage() {
               </p>
             </div>
             <div className="mt-8 flex items-end gap-3">
-              <span className="text-7xl font-semibold leading-none tracking-[-0.1em] text-[#123d61]">{selectedArea.score ?? "—"}</span>
-              <span className="pb-2 text-sm text-slate-500">skor estimasi<br />dari 100</span>
+              <span className="text-7xl font-semibold leading-none tracking-[-0.1em] text-[#123d61]">
+                {selectedRealtimeLoading ? "…" : selectedArea.score ?? "—"}
+              </span>
+              <span className="pb-2 text-sm text-slate-500">
+                skor risiko banjir<br />dari 100
+                {selectedRealtimeLoading && <small className="mt-1 block text-xs">Memperbarui…</small>}
+              </span>
             </div>
             <div className="mt-6 h-2 rounded-full bg-white">
               <motion.div
@@ -333,105 +520,6 @@ export default function PetaRisikoPage() {
             </Link>
             </>}
           </motion.aside>
-        </div>
-      </section>
-
-      <section className="bg-[#f0e7e2] px-6 py-20">
-        <div className="mx-auto max-w-[1180px]">
-          <div className="flex flex-col justify-between gap-5 sm:flex-row sm:items-end">
-            <div>
-              <p className="text-xs font-bold uppercase tracking-[0.2em] text-[#f38a50]">Ringkasan wilayah</p>
-              <h2 className="mt-3 text-4xl font-semibold tracking-[-0.07em] text-[#123d61]">Bandingkan dengan cepat.</h2>
-            </div>
-            <div className="flex gap-2">
-              {(["Semua", "Tinggi", "Sedang", "Rendah"] as const).map((item) => (
-                <button key={item} type="button" onClick={() => setFilter(item)} className={`rounded-full px-4 py-2 text-xs font-bold transition ${filter === item ? "bg-[#123d61] text-white" : "bg-white text-slate-600 hover:bg-[#82d4d0]"}`}>
-                  {item}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div className="mt-6 grid gap-3 sm:grid-cols-[1fr_auto]">
-            <select
-              value={regency}
-              onChange={(event) => setRegency(event.target.value)}
-              className="rounded-xl border-0 bg-white px-4 py-3 text-sm text-[#123d61] outline-none"
-              aria-label="Filter kabupaten atau kota"
-            >
-              <option value="Semua">Semua kabupaten/kota</option>
-              {regencies.map(([code, name]) => <option key={code} value={code}>{name}</option>)}
-            </select>
-            <select
-              value={sort}
-              onChange={(event) => setSort(event.target.value as "risk" | "name")}
-              className="rounded-xl border-0 bg-white px-4 py-3 text-sm text-[#123d61] outline-none"
-              aria-label="Urutkan wilayah"
-            >
-              <option value="risk">Urutkan risiko</option>
-              <option value="name">Urutkan nama</option>
-            </select>
-          </div>
-          <div className="mt-10 divide-y divide-[#26669a]/15 border-y border-[#26669a]/15">
-            <div className="border-b border-[#26669a]/15 py-4">
-              <input
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
-                placeholder="Cari nama wilayah..."
-                className="w-full rounded-xl border-0 bg-white px-4 py-3 text-sm text-[#123d61] outline-none"
-                aria-label="Cari wilayah"
-              />
-            </div>
-            <div className="flex flex-col gap-3 border-b border-[#26669a]/15 py-4 sm:flex-row sm:items-center sm:justify-between">
-              <label className="flex items-center gap-2 text-sm text-slate-600">
-                Tampilkan
-                <select
-                  value={pageSize}
-                  onChange={(event) => {
-                    setPageSize(Number(event.target.value) as 5 | 10 | 20);
-                    setPage(1);
-                  }}
-                  className="rounded-lg border-0 bg-white px-3 py-2 text-sm text-[#123d61] outline-none"
-                  aria-label="Jumlah wilayah per halaman"
-                >
-                  <option value="5">5</option>
-                  <option value="10">10</option>
-                  <option value="20">20</option>
-                </select>
-                wilayah per halaman
-              </label>
-              <span className="text-xs text-slate-500">{visibleAreas.length} wilayah · halaman {page} dari {totalPages}</span>
-            </div>
-            {pagedAreas.map((area, index) => (
-              <motion.button
-                key={area.slug}
-                type="button"
-                onClick={() => setSelectedArea(area)}
-                initial={{ opacity: 0, x: -12 }}
-                whileInView={{ opacity: 1, x: 0 }}
-                viewport={{ once: true }}
-                transition={{ delay: index * 0.08 }}
-                className="grid w-full gap-3 py-6 text-left transition hover:px-3 sm:grid-cols-[1.2fr_1fr_0.5fr_auto] sm:items-center"
-              >
-                <span className="font-semibold text-[#123d61]">{area.name}<small className="mt-1 block font-normal text-slate-500">{area.regency_name ?? "Kabupaten/kota belum tersedia"}</small></span>
-                <span className="text-sm text-slate-500">
-                  {area.detail}
-                  <small className="mt-1 block">{regencyLabel(area)} · Prakiraan BMKG: {area.weather.rainfall_mm ?? "-"} mm</small>
-                </span>
-                <span className="text-2xl font-semibold text-[#123d61]">{area.score}</span>
-                <span className={`w-fit rounded-full px-3 py-1 text-xs font-bold ${riskColors[area.level]}`}>{area.level}</span>
-              </motion.button>
-            ))}
-            {visibleAreas.length === 0 && <p className="py-8 text-center text-sm text-slate-500">Wilayah tidak ditemukan.</p>}
-            {totalPages > 1 && <div className="flex flex-col gap-3 border-t border-[#26669a]/15 py-4 sm:flex-row sm:items-center sm:justify-between">
-              <button type="button" disabled={page === 1} onClick={() => setPage((current) => Math.max(1, current - 1))} className="w-full rounded-full bg-white px-4 py-2 text-xs font-bold text-[#123d61] disabled:cursor-not-allowed disabled:opacity-40 sm:w-auto">Sebelumnya</button>
-              <div className="flex max-w-full flex-wrap justify-center gap-1">
-                {paginationItems.map((item, index) => item === "ellipsis"
-                  ? <span key={`ellipsis-${index}`} className="flex h-8 min-w-8 items-center justify-center px-1 text-xs text-slate-500">...</span>
-                  : <button key={item} type="button" onClick={() => setPage(item)} className={`h-8 min-w-8 rounded-full px-2 text-xs font-bold ${page === item ? "bg-[#123d61] text-white" : "bg-white text-[#123d61]"}`}>{item}</button>)}
-              </div>
-              <button type="button" disabled={page === totalPages} onClick={() => setPage((current) => Math.min(totalPages, current + 1))} className="w-full rounded-full bg-white px-4 py-2 text-xs font-bold text-[#123d61] disabled:cursor-not-allowed disabled:opacity-40 sm:w-auto">Berikutnya</button>
-            </div>}
-          </div>
         </div>
       </section>
 
