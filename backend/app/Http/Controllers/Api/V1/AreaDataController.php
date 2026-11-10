@@ -7,7 +7,6 @@ use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 
 class AreaDataController extends Controller
@@ -73,20 +72,14 @@ class AreaDataController extends Controller
             ->first();
         $predictionPayload = $prediction === null
             ? null
-            : Cache::remember(
-                sprintf('area-risk-realtime:%s:%s', $area->id, $prediction->id),
-                now()->addMinutes(5),
-                function () use ($area, $prediction): array {
-                    return $this->realtimePredictionPayload($prediction, $this->fetchCurrentWeather($area));
-                },
-            );
+            : $this->realtimePredictionPayload($prediction, $this->fetchCurrentWeather($area));
 
         return response()->json([
             'data' => [
                 'area' => $this->areaPayload($area),
                 'prediction' => $predictionPayload,
             ],
-        ]);
+        ])->header('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
     }
 
     public function rainfall(Request $request, string $slug): JsonResponse
@@ -148,19 +141,14 @@ class AreaDataController extends Controller
             return response()->json(['message' => 'Current weather provider is unavailable.'], 502);
         }
 
-        return response()->json(['data' => $weather]);
+        return response()->json(['data' => $weather])
+            ->header('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
     }
 
     private function fetchCurrentWeather(object $area): ?array
     {
         if ($area->centroid_lat === null || $area->centroid_lng === null) {
             return null;
-        }
-
-        $cacheKey = sprintf('area-current-weather:%s:%s', $area->centroid_lat, $area->centroid_lng);
-        $cached = Cache::get($cacheKey);
-        if (is_array($cached)) {
-            return $cached;
         }
 
         try {
@@ -212,7 +200,7 @@ class AreaDataController extends Controller
         );
         // The hourly series is a forecast and can still show rain after it has
         // stopped. Use the near-real-time current observation for the active label.
-        $isCurrentlyRaining = $currentPrecipitation > 0.01;
+        $isCurrentlyRaining = $currentPrecipitation > 0.1;
         $durationHours = $isCurrentlyRaining ? $end - $start + 1 : 0;
         $intensityScore = $currentPrecipitation <= 0.1 ? 0
             : ($currentPrecipitation < 1 ? 10
@@ -242,8 +230,6 @@ class AreaDataController extends Controller
                 'duration_hours' => $durationHours,
             ],
         ];
-        Cache::put($cacheKey, $weather, now()->addMinutes(5));
-
         return $weather;
     }
 

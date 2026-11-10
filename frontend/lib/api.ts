@@ -230,8 +230,9 @@ export type ApiCurrentWeather = {
 };
 
 export async function getAreaCurrentWeather(slug: string): Promise<ApiCurrentWeather> {
+  const cacheBuster = `?t=${Date.now()}`;
   const response = await getJson<{ data: ApiCurrentWeather }>(
-    `/v1/areas/${encodeURIComponent(slug)}/current-weather`,
+    `/v1/areas/${encodeURIComponent(slug)}/current-weather${cacheBuster}`,
   );
   return response.data;
 }

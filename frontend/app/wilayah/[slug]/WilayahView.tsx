@@ -65,7 +65,7 @@ export default function WilayahView({ wilayah }: Props) {
       .catch(() => setError("Data wilayah belum dapat dimuat. Pastikan server Laravel aktif."));
     setError(null);
     load();
-    const refresh = window.setInterval(load, 300_000);
+    const refresh = window.setInterval(load, 60_000);
     return () => window.clearInterval(refresh);
   }, [wilayah]);
 

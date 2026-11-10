@@ -32,10 +32,17 @@ class GeminiDataDiscoveryService
         }
 
         $response = Http::timeout(45)
+            ->retry(3, 750, function (\Throwable $exception): bool {
+                return $exception instanceof ConnectionException
+                    || ($exception instanceof RequestException && $exception->response?->serverError());
+            }, throw: false)
             ->acceptJson()
             ->post('https://generativelanguage.googleapis.com/v1beta/models/'.rawurlencode($model).':generateContent?key='.rawurlencode($apiKey), $request);
 
         if ($response->failed()) {
+            if ($response->serverError()) {
+                return $this->fallbackResult($area, 'Gemini sedang tidak tersedia (HTTP '.$response->status().').');
+            }
             if ($response->status() === 429) {
                 $message = config('services.gemini.google_search', false)
                     ? 'Kuota Gemini Google Search grounding habis atau rate limit tercapai. Nonaktifkan grounding atau tunggu kuota pulih.'
@@ -76,6 +83,48 @@ class GeminiDataDiscoveryService
             'disclaimer' => config('services.gemini.google_search', false)
                 ? 'Hasil ini memakai Google Search grounding, tetapi tetap kandidat untuk ditinjau. Tidak ada data yang dimasukkan ke model risiko secara otomatis.'
                 : 'Google Search grounding sedang nonaktif karena batas kuota. Hasil Gemini bukan bukti sumber terbaru; verifikasi setiap URL sebelum digunakan. Tidak ada data yang dimasukkan ke model risiko secara otomatis.',
+        ];
+    }
+
+    private function fallbackResult(object $area, string $reason): array
+    {
+        return [
+            'area' => [
+                'name' => $area->name,
+                'regency_name' => $area->regency_name,
+                'province_name' => $area->province_name,
+            ],
+            'summary' => 'Gemini sementara tidak tersedia. Berikut kandidat sumber resmi yang dapat diverifikasi secara manual.',
+            'datasets' => [
+                [
+                    'category' => 'rainfall',
+                    'title' => 'Prakiraan cuaca dan peringatan dini BMKG',
+                    'provider' => 'BMKG',
+                    'url' => 'https://www.bmkg.go.id/',
+                    'format' => 'Portal web',
+                    'coverage' => 'Indonesia',
+                    'year' => 'Terbaru sesuai pembaruan BMKG',
+                    'status' => 'fallback',
+                    'http_status' => null,
+                    'reason' => $reason,
+                ],
+                [
+                    'category' => 'elevation',
+                    'title' => 'Ina-Geoportal',
+                    'provider' => 'Badan Informasi Geospasial',
+                    'url' => 'https://tanahair.indonesia.go.id/portal-web',
+                    'format' => 'Geoportal',
+                    'coverage' => 'Indonesia',
+                    'year' => 'Perlu diverifikasi',
+                    'status' => 'fallback',
+                    'http_status' => null,
+                    'reason' => 'Kandidat sumber geospasial resmi; verifikasi layer dan cakupan wilayah sebelum digunakan.',
+                ],
+            ],
+            'searched_at' => now()->toIso8601String(),
+            'grounded' => false,
+            'fallback' => true,
+            'disclaimer' => 'Gemini sementara tidak tersedia. Kandidat fallback ini bukan hasil pencarian otomatis dan wajib diverifikasi sebelum digunakan.',
         ];
     }
 

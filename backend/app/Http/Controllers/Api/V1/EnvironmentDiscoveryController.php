@@ -34,9 +34,10 @@ class EnvironmentDiscoveryController extends Controller
 
         try {
             $result = $discovery->discover($area);
-            Cache::put($cacheKey, $result, now()->addMinutes(10));
+            Cache::put($cacheKey, $result, now()->addMinutes(($result['fallback'] ?? false) ? 2 : 10));
 
-            return response()->json(['data' => $result, 'cached' => false]);
+            return response()->json(['data' => $result, 'cached' => false])
+                ->header('Cache-Control', 'no-store');
         } catch (\RuntimeException $error) {
             $status = str_contains($error->getMessage(), 'Kuota Gemini')
                 ? 429
