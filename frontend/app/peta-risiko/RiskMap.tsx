@@ -55,7 +55,6 @@ export default function RiskMap({ areas, selectedArea, onSelect }: Props) {
     }).addTo(map);
 
     return () => {
-      map.eachLayer((layer) => layer.remove());
       map.remove();
       mapRef.current = null;
     };
@@ -102,7 +101,9 @@ export default function RiskMap({ areas, selectedArea, onSelect }: Props) {
     });
 
     return () => {
-      layers.remove();
+      if (mapRef.current === map) {
+        layers.remove();
+      }
     };
   }, [areas, onSelect, selectedArea]);
 
