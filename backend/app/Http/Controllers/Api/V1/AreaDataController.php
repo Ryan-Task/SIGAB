@@ -205,14 +205,21 @@ class AreaDataController extends Controller
                 $end++;
             }
         }
-        $currentPrecipitation = (float) ($current['precipitation'] ?? 0);
-        $durationHours = $isWet($currentIndex) ? $end - $start + 1 : 0;
+        $currentPrecipitation = max(
+            (float) ($current['precipitation'] ?? 0),
+            (float) ($current['rain'] ?? 0),
+            (float) ($current['showers'] ?? 0),
+        );
+        // The hourly series is a forecast and can still show rain after it has
+        // stopped. Use the near-real-time current observation for the active label.
+        $isCurrentlyRaining = $currentPrecipitation > 0.01;
+        $durationHours = $isCurrentlyRaining ? $end - $start + 1 : 0;
         $intensityScore = $currentPrecipitation <= 0.1 ? 0
             : ($currentPrecipitation < 1 ? 10
                 : ($currentPrecipitation < 5 ? 25
                     : ($currentPrecipitation < 10 ? 50
                         : ($currentPrecipitation < 20 ? 75 : 100))));
-        $rainScore = $isWet($currentIndex)
+        $rainScore = $isCurrentlyRaining
             ? round(min(100, ($intensityScore * 0.7) + min(30, $durationHours * 5)), 2)
             : 0;
 
@@ -226,12 +233,12 @@ class AreaDataController extends Controller
                 'rain_mm' => $current['rain'] ?? 0,
                 'showers_mm' => $current['showers'] ?? 0,
                 'weather_code' => $current['weather_code'] ?? null,
-                'is_raining' => $isWet($currentIndex),
+                'is_raining' => $isCurrentlyRaining,
                 'rain_score' => $rainScore,
             ],
             'rain_window' => [
-                'start_at' => $isWet($currentIndex) ? ($times[$start] ?? null) : null,
-                'end_at' => $isWet($currentIndex) ? ($times[$end] ?? null) : null,
+                'start_at' => $isCurrentlyRaining ? ($times[$start] ?? null) : null,
+                'end_at' => $isCurrentlyRaining ? ($times[$end] ?? null) : null,
                 'duration_hours' => $durationHours,
             ],
         ];
