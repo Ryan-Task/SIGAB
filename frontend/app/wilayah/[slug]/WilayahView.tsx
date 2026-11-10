@@ -3,7 +3,7 @@
 import { motion } from "framer-motion";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
-import { getAreaCurrentWeather, getAreaRainfall, getAreaRisk, type ApiCurrentWeather, type ApiRainfallRecord, type ApiRiskExplanation, type ApiRiskPrediction } from "../../../lib/api";
+import { discoverEnvironmentData, getAreaCurrentWeather, getAreaRainfall, getAreaRisk, type ApiCurrentWeather, type ApiEnvironmentDiscovery, type ApiRainfallRecord, type ApiRiskExplanation, type ApiRiskPrediction } from "../../../lib/api";
 
 type Props = { wilayah: string };
 
@@ -42,6 +42,10 @@ export default function WilayahView({ wilayah }: Props) {
   const [currentWeather, setCurrentWeather] = useState<ApiCurrentWeather | null>(null);
   const [rainfallUpdatedAt, setRainfallUpdatedAt] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [discovery, setDiscovery] = useState<ApiEnvironmentDiscovery | null>(null);
+  const [discoveryLoading, setDiscoveryLoading] = useState(false);
+  const [discoveryError, setDiscoveryError] = useState<string | null>(null);
+  const [discoveryCooldown, setDiscoveryCooldown] = useState(false);
   const forecastTouchStart = useRef<number | null>(null);
 
   useEffect(() => {
@@ -164,6 +168,19 @@ export default function WilayahView({ wilayah }: Props) {
     if (value === null || value === undefined || !Number.isFinite(Number(value))) return "—";
     return Number(value).toFixed(2).replace(/\.?0+$/, "");
   };
+  const runDiscovery = () => {
+    if (discoveryLoading || discoveryCooldown) return;
+    setDiscoveryLoading(true);
+    setDiscoveryError(null);
+    discoverEnvironmentData(wilayah)
+      .then(setDiscovery)
+      .catch((error: unknown) => setDiscoveryError(error instanceof Error ? error.message : "Pencarian sumber data belum berhasil."))
+      .finally(() => {
+        setDiscoveryLoading(false);
+        setDiscoveryCooldown(true);
+        window.setTimeout(() => setDiscoveryCooldown(false), 30_000);
+      });
+  };
 
   return (
     <main className="min-h-screen bg-[#dfeaf0] text-slate-800">
@@ -276,6 +293,37 @@ export default function WilayahView({ wilayah }: Props) {
             <p className="mt-4 text-sm leading-7 text-slate-600">{explanation?.caveat ?? "Belum ada penjelasan sumber untuk prediksi ini."}</p>
             <p className="mt-2 text-xs text-slate-500">Confidence: {explanation?.confidence ?? "limited"}{explanation?.confidence_reasons?.length ? ` — ${explanation.confidence_reasons.join(", ")}` : ""}</p>
             <div className="mt-6 grid gap-3 md:grid-cols-4">{[["rainfall", "Cuaca dan curah hujan"], ["history", "Riwayat banjir"], ["environment", "Faktor lingkungan"], ["drainage", "Kondisi drainase"]].map(([key, label]) => { const detail = explanation?.sources?.[key]; return <div key={key} className="rounded-2xl bg-[#dfeaf0] p-4"><p className="text-sm font-semibold text-[#123d61]">{label}</p><p className="mt-2 text-xs text-slate-600">{sourceStatus(explanation, key)}{detail?.provider ? ` dari ${detail.provider}` : ""}</p>{detail?.elevation_m != null && <p className="mt-1 text-xs text-slate-500">Elevasi: {detail.elevation_m} m</p>}{detail?.river_distance_m != null && <p className="mt-1 text-xs text-slate-500">Jarak sungai: {detail.river_distance_m} m</p>}{detail?.fetched_at && <p className="mt-1 text-xs text-slate-500">Diambil: {new Date(detail.fetched_at).toLocaleString("id-ID")}</p>}</div>; })}</div>
+          </div>
+
+          <div className="mt-8 rounded-[30px] bg-[#123d61] p-8 text-white">
+            <div className="flex flex-col justify-between gap-4 md:flex-row md:items-end">
+              <div>
+                <p className="text-xs font-bold uppercase tracking-[0.18em] text-[#82d4d0]">AI Data Discovery</p>
+                <h2 className="mt-3 text-3xl font-semibold tracking-[-0.06em]">Cari sumber data lingkungan</h2>
+                <p className="mt-3 max-w-2xl text-sm leading-7 text-sky-100/75">Gemini membantu menemukan referensi drainase, sungai, tutupan lahan, elevasi, dan histori banjir. Hasilnya hanya kandidat untuk ditinjau dan tidak mengubah skor risiko otomatis.</p>
+              </div>
+              <button type="button" onClick={runDiscovery} disabled={discoveryLoading || discoveryCooldown} className="rounded-full bg-[#f38a50] px-5 py-3 text-sm font-bold text-[#123d61] disabled:cursor-not-allowed disabled:opacity-60">
+                {discoveryLoading ? "Mencari..." : discoveryCooldown ? "Tunggu sebentar..." : "Cari sumber"}
+              </button>
+            </div>
+            {discoveryError && <p className="mt-5 rounded-2xl bg-red-400/20 p-4 text-sm text-red-100">{discoveryError}</p>}
+            {discovery && (
+              <div className="mt-6 space-y-4">
+                {discovery.summary && <p className="rounded-2xl bg-white/10 p-4 text-sm leading-6 text-sky-100">{discovery.summary}</p>}
+                {discovery.datasets.length === 0 ? <p className="text-sm text-sky-100/70">Tidak ada kandidat dataset yang dapat ditampilkan.</p> : discovery.datasets.map((dataset) => (
+                  <article key={`${dataset.url}-${dataset.title}`} className="rounded-2xl bg-white p-5 text-[#123d61]">
+                    <div className="flex flex-col justify-between gap-2 md:flex-row">
+                      <div><p className="text-xs font-bold uppercase tracking-wider text-[#f38a50]">{dataset.category}</p><h3 className="mt-1 text-lg font-semibold">{dataset.title}</h3><p className="mt-1 text-sm">{dataset.provider} · {dataset.format} · {dataset.year}</p></div>
+                      <span className={`h-fit rounded-full px-3 py-1 text-xs font-bold ${dataset.status === "reachable" ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-800"}`}>{dataset.status === "reachable" ? "URL dapat diakses" : "Perlu diperiksa"}</span>
+                    </div>
+                    <p className="mt-3 text-sm text-slate-600">Cakupan: {dataset.coverage}</p>
+                    {dataset.reason && <p className="mt-1 text-sm text-slate-600">{dataset.reason}</p>}
+                    <a href={dataset.url} target="_blank" rel="noreferrer" className="mt-3 block truncate text-sm font-semibold text-[#26669a] underline">{dataset.url}</a>
+                  </article>
+                ))}
+                <p className="text-xs leading-5 text-sky-100/60">{discovery.disclaimer}</p>
+              </div>
+            )}
           </div>
 
           <div className="mt-8 rounded-[30px] bg-[#f0e7e2] p-8"><p className="text-xs font-bold uppercase tracking-[0.18em] text-[#f38a50]">Saran singkat</p><h2 className="mt-4 text-3xl font-semibold tracking-[-0.06em] text-[#123d61]">Siapkan lebih awal.</h2><p className="mt-4 text-sm leading-7 text-slate-600">Letakkan barang penting di tempat tinggi, pantau informasi resmi, dan kenali jalur menuju tempat aman.</p><Link href="/mitigasi" className="mt-8 inline-flex rounded-full bg-[#123d61] px-5 py-3 text-sm font-bold text-white">Baca panduan mitigasi</Link></div>

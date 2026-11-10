@@ -133,7 +133,14 @@ const apiBaseUrl = process.env.NEXT_PUBLIC_API_URL ?? "/api";
 async function getJson<T>(path: string): Promise<T> {
   const response = await fetch(`${apiBaseUrl}${path}`, { cache: "no-store" });
   if (!response.ok) {
-    throw new Error(`API request failed: ${response.status}`);
+    let message = `API request failed: ${response.status}`;
+    try {
+      const body = await response.json() as { message?: unknown };
+      if (typeof body.message === "string" && body.message.trim() !== "") message = body.message;
+    } catch {
+      // Keep the HTTP status when the server does not return JSON.
+    }
+    throw new Error(message);
   }
   return response.json() as Promise<T>;
 }
@@ -151,6 +158,35 @@ export async function getLatestPredictions(): Promise<ApiPrediction[]> {
 export async function getAreaRisk(slug: string): Promise<{ area: ApiArea; prediction: ApiRiskPrediction | null }> {
   const response = await getJson<{ data: { area: ApiArea; prediction: ApiRiskPrediction | null } }>(
     `/v1/areas/${encodeURIComponent(slug)}/risk`,
+  );
+  return response.data;
+}
+
+export type ApiEnvironmentDataset = {
+  category: string;
+  title: string;
+  provider: string;
+  url: string;
+  format: string;
+  coverage: string;
+  year: string;
+  status: "reachable" | "unreachable" | "invalid_url";
+  http_status: number | null;
+  reason: string | null;
+};
+
+export type ApiEnvironmentDiscovery = {
+  area: { name: string; regency_name: string | null; province_name: string | null };
+  summary: string | null;
+  datasets: ApiEnvironmentDataset[];
+  searched_at: string;
+  grounded: boolean;
+  disclaimer: string;
+};
+
+export async function discoverEnvironmentData(slug: string): Promise<ApiEnvironmentDiscovery> {
+  const response = await getJson<{ data: ApiEnvironmentDiscovery }>(
+    `/v1/areas/${encodeURIComponent(slug)}/environment-discovery`,
   );
   return response.data;
 }

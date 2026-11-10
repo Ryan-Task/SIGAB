@@ -7,6 +7,27 @@
 <a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/l/laravel/framework" alt="License"></a>
 </p>
 
+## Gemini environment discovery
+
+Detail wilayah menyediakan pencarian kandidat sumber data lingkungan melalui
+Gemini dengan Google Search grounding. Backend hanya mengembalikan metadata
+sumber dan memeriksa apakah URL dapat diakses; hasil tersebut tidak mengubah
+prediksi atau mengisi nilai data yang kosong secara otomatis.
+
+Atur kredensial lokal di `backend/.env` dan jangan commit file tersebut:
+
+```env
+GEMINI_API_KEY=isi_dengan_key_baru
+GEMINI_MODEL=gemini-3.1-flash-lite
+GEMINI_GOOGLE_SEARCH=false
+```
+
+Endpoint demo dibatasi 10 request per menit per client:
+`GET /api/v1/areas/{slug}/environment-discovery`.
+Google Search grounding bersifat opt-in melalui `GEMINI_GOOGLE_SEARCH=true`.
+Jika kuota grounding belum tersedia, biarkan `false` dan verifikasi URL hasil
+Gemini secara manual sebelum menjadikannya sumber data.
+
 ## About Laravel
 
 Laravel is a web application framework with expressive, elegant syntax. We believe development must be an enjoyable and creative experience to be truly fulfilling. Laravel takes the pain out of development by easing common tasks used in many web projects, such as:
