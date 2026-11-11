@@ -1,9 +1,14 @@
 "use client";
 
 import { use } from "react";
-import WilayahView from "./WilayahView";
+import WilayahView, { type WilayahInitialData } from "./WilayahView";
 
-export default function WilayahRoute({ params }: { params: Promise<{ slug: string }> }) {
+type Props = {
+  params: Promise<{ slug: string }>;
+  initial?: WilayahInitialData | null;
+};
+
+export default function WilayahRoute({ params, initial }: Props) {
   const { slug } = use(params);
-  return <WilayahView wilayah={slug} />;
+  return <WilayahView key={slug} wilayah={slug} initial={initial} />;
 }

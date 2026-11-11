@@ -7,7 +7,6 @@ import { useEffect, useState } from "react";
 const navItems = [
   { label: "Beranda", href: "/" },
   { label: "Peta Risiko", href: "/peta-risiko" },
-  { label: "Wilayah", href: "/wilayah/surabaya" },
   { label: "Peringatan", href: "/peringatan" },
   { label: "Data Historis", href: "/data-historis" },
   { label: "Mitigasi", href: "/mitigasi" },

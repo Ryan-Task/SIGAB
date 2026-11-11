@@ -3,16 +3,22 @@
 import { motion } from "framer-motion";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
-import { discoverEnvironmentData, getAreaCurrentWeather, getAreaRainfall, getAreaRisk, type ApiCurrentWeather, type ApiEnvironmentDiscovery, type ApiRainfallRecord, type ApiRiskExplanation, type ApiRiskPrediction } from "../../../lib/api";
+import { discoverEnvironmentData, getAreaCurrentWeather, getAreaRainfall, getAreaRisk, type ApiArea, type ApiCurrentWeather, type ApiEnvironmentDiscovery, type ApiRainfallRecord, type ApiRiskExplanation, type ApiRiskPrediction } from "../../../lib/api";
 
-type Props = { wilayah: string };
+export type WilayahInitialData = {
+  risk: { area: ApiArea; prediction: ApiRiskPrediction | null } | null;
+  rainfall: ApiRainfallRecord[] | null;
+  weather: ApiCurrentWeather | null;
+};
+
+type Props = { wilayah: string; initial?: WilayahInitialData | null };
 
 function sourceStatus(explanation: ApiRiskExplanation | null | undefined, key: string): string {
   return explanation?.sources?.[key]?.status === "available" ? "Tersedia" : "Belum tersedia";
 }
 
-function formatRelativeTime(value: string): string {
-  const elapsedMinutes = Math.max(0, Math.floor((Date.now() - new Date(value).getTime()) / 60_000));
+function formatRelativeTime(value: string, now: number): string {
+  const elapsedMinutes = Math.max(0, Math.floor((now - new Date(value).getTime()) / 60_000));
   if (elapsedMinutes < 1) return "Baru saja";
   if (elapsedMinutes === 1) return "1 menit yang lalu";
   if (elapsedMinutes < 60) return `${elapsedMinutes} menit yang lalu`;
@@ -31,43 +37,68 @@ function formatDateTime(value: string): string {
   }).format(new Date(value));
 }
 
-export default function WilayahView({ wilayah }: Props) {
-  const [area, setArea] = useState<{ name: string; slug: string } | null>(null);
-  const [prediction, setPrediction] = useState<ApiRiskPrediction | null>(null);
-  const [rainfall, setRainfall] = useState<string | null>(null);
-  const [rainfallProbability, setRainfallProbability] = useState<number | string | null>(null);
-  const [weatherDescription, setWeatherDescription] = useState<string | null>(null);
-  const [rainfallForecast, setRainfallForecast] = useState<ApiRainfallRecord[]>([]);
+export default function WilayahView({ wilayah, initial }: Props) {
+  const [area, setArea] = useState<{ name: string; slug: string } | null>(initial?.risk?.area ?? null);
+  const [prediction, setPrediction] = useState<ApiRiskPrediction | null>(initial?.risk?.prediction ?? null);
+  const [rainfall, setRainfall] = useState<string | null>(initial?.rainfall?.[0]?.rainfall_mm ?? null);
+  const [rainfallProbability, setRainfallProbability] = useState<number | string | null>(initial?.rainfall?.[0]?.rainfall_probability ?? null);
+  const [weatherDescription, setWeatherDescription] = useState<string | null>(initial?.rainfall?.[0]?.weather_description ?? null);
+  const [rainfallForecast, setRainfallForecast] = useState<ApiRainfallRecord[]>(initial?.rainfall ?? []);
   const [forecastIndex, setForecastIndex] = useState(0);
-  const [currentWeather, setCurrentWeather] = useState<ApiCurrentWeather | null>(null);
-  const [rainfallUpdatedAt, setRainfallUpdatedAt] = useState<string | null>(null);
+  const [currentWeather, setCurrentWeather] = useState<ApiCurrentWeather | null>(initial?.weather ?? null);
+  const [rainfallUpdatedAt, setRainfallUpdatedAt] = useState<string | null>(
+    initial?.risk?.prediction?.explanation?.sources?.rainfall?.fetched_at
+      ?? initial?.risk?.prediction?.calculated_at
+      ?? initial?.rainfall?.[0]?.fetched_at
+      ?? null,
+  );
   const [error, setError] = useState<string | null>(null);
   const [discovery, setDiscovery] = useState<ApiEnvironmentDiscovery | null>(null);
   const [discoveryLoading, setDiscoveryLoading] = useState(false);
   const [discoveryError, setDiscoveryError] = useState<string | null>(null);
   const [discoveryCooldown, setDiscoveryCooldown] = useState(false);
   const forecastTouchStart = useRef<number | null>(null);
+  // Date.now() must not run during server prerender; set it after hydration.
+  const [now, setNow] = useState<number | null>(null);
+  useEffect(() => {
+    setNow(Date.now());
+  }, []);
 
   useEffect(() => {
-    const load = () => Promise.all([getAreaRisk(wilayah), getAreaRainfall(wilayah), getAreaCurrentWeather(wilayah)])
-      .then(([risk, rainfallResponse, currentWeatherResponse]) => {
-        setArea(risk.area);
-        setPrediction(risk.prediction);
-        setRainfall(rainfallResponse.data[0]?.rainfall_mm ?? null);
-        setRainfallProbability(rainfallResponse.data[0]?.rainfall_probability ?? null);
-        setWeatherDescription(rainfallResponse.data[0]?.weather_description ?? null);
-        setRainfallForecast(rainfallResponse.data);
-        setForecastIndex((currentIndex) => Math.min(currentIndex, Math.max(0, rainfallResponse.data.length - 1)));
-        setCurrentWeather(currentWeatherResponse);
-        const rainfallFetchedAt = risk.prediction?.explanation?.sources?.rainfall?.fetched_at;
-        setRainfallUpdatedAt(rainfallFetchedAt ?? rainfallResponse.data[0]?.fetched_at ?? risk.prediction?.calculated_at ?? null);
-      })
-      .catch(() => setError("Data wilayah belum dapat dimuat. Pastikan server Laravel aktif."));
-    setError(null);
-    load();
-    const refresh = window.setInterval(load, 60_000);
-    return () => window.clearInterval(refresh);
-  }, [wilayah]);
+    // Each payload renders as soon as it arrives: the risk score must not wait
+    // for the weather provider, and a failing optional feed must not blank the page.
+    const load = () => {
+      getAreaRisk(wilayah)
+        .then((risk) => {
+          setError(null);
+          setArea(risk.area);
+          setPrediction(risk.prediction);
+          const rainfallFetchedAt = risk.prediction?.explanation?.sources?.rainfall?.fetched_at;
+          setRainfallUpdatedAt(rainfallFetchedAt ?? risk.prediction?.calculated_at ?? null);
+        })
+        .catch(() => setError("Data wilayah belum dapat dimuat. Pastikan server Laravel aktif."));
+
+      getAreaRainfall(wilayah)
+        .then((rainfallResponse) => {
+          setRainfall(rainfallResponse.data[0]?.rainfall_mm ?? null);
+          setRainfallProbability(rainfallResponse.data[0]?.rainfall_probability ?? null);
+          setWeatherDescription(rainfallResponse.data[0]?.weather_description ?? null);
+          setRainfallForecast(rainfallResponse.data);
+          setForecastIndex((currentIndex) => Math.min(currentIndex, Math.max(0, rainfallResponse.data.length - 1)));
+          setRainfallUpdatedAt((current) => current ?? rainfallResponse.data[0]?.fetched_at ?? null);
+        })
+        .catch(() => undefined);
+
+      getAreaCurrentWeather(wilayah)
+        .then(setCurrentWeather)
+        .catch(() => undefined);
+    };
+    // Server-prefetched data renders immediately; only fetch on mount when the
+        // initial payload is missing (e.g. a failed prefetch).
+        if (!initial) load();
+        const refresh = window.setInterval(load, 60_000);
+        return () => window.clearInterval(refresh);
+      }, [wilayah, initial]);
 
   const title = area?.name ?? wilayah.replaceAll("-", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
   const score = prediction?.score ?? null;
@@ -109,12 +140,14 @@ export default function WilayahView({ wilayah }: Props) {
     ? `${formatDateTime(currentWeather.rain_window.start_at)}–${formatDateTime(currentWeather.rain_window.end_at)} (${currentWeather.rain_window.duration_hours} jam)`
     : "Tidak ada hujan terdeteksi saat ini";
   const probabilityWidth = Number.parseFloat(String(rainfallProbability ?? 0)) || 0;
-  const updatedLabel = rainfallUpdatedAt
-    ? formatRelativeTime(rainfallUpdatedAt)
-    : "Waktu belum tersedia";
-  const isStale = rainfallUpdatedAt
-    ? Date.now() - new Date(rainfallUpdatedAt).getTime() > 30 * 60_000
-    : false;
+  const updatedLabel = rainfallUpdatedAt && now != null
+      ? formatRelativeTime(rainfallUpdatedAt, now)
+      : rainfallUpdatedAt
+        ? formatDateTime(rainfallUpdatedAt)
+        : "Waktu belum tersedia";
+    const isStale = rainfallUpdatedAt && now != null
+      ? now - new Date(rainfallUpdatedAt).getTime() > 30 * 60_000
+      : false;
   const updatedDateTime = rainfallUpdatedAt
     ? formatDateTime(rainfallUpdatedAt)
     : "Tanggal dan waktu belum tersedia";
@@ -258,7 +291,7 @@ export default function WilayahView({ wilayah }: Props) {
             <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="rounded-[28px] bg-white p-7">
               <p className="text-xs font-bold uppercase tracking-[0.18em] opacity-70">Kondisi saat ini</p>
               <p className="mt-6 text-5xl font-semibold tracking-[-0.08em]">{currentRainLabel}</p>
-              <p className="mt-2 text-sm opacity-70">{currentRainDurationLabel} · diperbarui {currentWeather ? formatRelativeTime(currentWeather.fetched_at) : "—"}</p>
+              <p className="mt-2 text-sm opacity-70">{currentRainDurationLabel} · diperbarui {currentWeather && now != null ? formatRelativeTime(currentWeather.fetched_at, now) : "—"}</p>
             </motion.div>
           </div>
 

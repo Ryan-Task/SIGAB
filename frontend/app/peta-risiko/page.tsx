@@ -265,7 +265,7 @@ export default function PetaRisikoPage() {
     ? []
     : orderedAreas.filter((area) =>
       area.regency_code === selectedRegency &&
-      area.name.toLowerCase().includes(selectedAreaSearch.toLowerCase()),
+      area.name.toLowerCase().startsWith(selectedAreaSearch.trim().toLowerCase()),
     );
   const visibleAreas = riskAreas.filter((area) =>
     (filter === "Semua" || area.level === filter) &&
@@ -434,7 +434,7 @@ export default function PetaRisikoPage() {
               className="mt-3 w-full rounded-xl border-0 bg-white px-4 py-3 text-sm text-[#123d61] outline-none"
               aria-label="Pilih kabupaten atau kota"
             >
-              <option value="Semua">1. Pilih kabupaten/kota</option>
+              <option value="Semua" disabled>1. Pilih kabupaten/kota</option>
               {regencies.map(([code, name]) => <option key={code} value={code}>{name}</option>)}
             </select>
             <label className="mt-4 block text-xs font-semibold text-[#26669a]" htmlFor="area-search">
@@ -459,9 +459,9 @@ export default function PetaRisikoPage() {
               className="mt-2 w-full rounded-xl border-0 bg-white px-4 py-3 text-sm text-[#123d61] outline-none disabled:cursor-not-allowed disabled:bg-slate-200"
               aria-label="Cari atau pilih wilayah"
             />
-            {selectedRegency !== "Semua" && selectedAreaSearch && !selectedExactMatch && selectedOptions.length > 0 && (
-              <div className="mt-2 max-h-36 overflow-y-auto rounded-xl bg-white p-2">
-                {selectedOptions.slice(0, 8).map((area) => (
+            {selectedRegency !== "Semua" && !selectedExactMatch && selectedOptions.length > 0 && (
+              <div className="mt-2 max-h-56 overflow-y-auto rounded-xl bg-white p-2">
+                {selectedOptions.slice(0, 30).map((area) => (
                   <button
                     key={area.slug}
                     type="button"

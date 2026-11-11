@@ -1,4 +1,5 @@
 import type { NextConfig } from "next";
+import { API_ORIGIN } from "./lib/api-origin";
 
 const nextConfig: NextConfig = {
   /* config options here */
@@ -6,7 +7,7 @@ const nextConfig: NextConfig = {
     return [
       {
         source: "/api/:path*",
-        destination: "http://127.0.0.1:8000/api/:path*",
+        destination: `${API_ORIGIN}/api/:path*`,
       },
     ];
   },

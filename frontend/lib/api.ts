@@ -1,3 +1,5 @@
+import { API_ORIGIN } from "./api-origin";
+
 export type ApiArea = {
   id: number;
   name: string;
@@ -70,6 +72,7 @@ export type ApiRiskExplanation = {
     river_distance_m?: number | null;
     river_provider?: string | null;
     river_fetched_at?: string | null;
+    nearest_drainage_distance_m?: number | null;
     environment_components?: Record<string, number | null>;
     drainage_components?: Record<string, number>;
     drainage_component_weights?: Record<string, number>;
@@ -126,12 +129,63 @@ export type ApiFloodHistory = {
   monthly: { month: string; count: number }[];
 };
 
+export type ApiHistorySummary = {
+  regency_code: string | null;
+  area_count: number;
+  rainfall: {
+    record_count: number;
+      rain_record_count: number;
+      wet_day_count: number;
+      total_mm: number;
+    avg_mm_per_area: number;
+    from: string | null;
+    to: string | null;
+    daily: { day: string; records: number; total_mm: number; avg_mm: number; areas: number }[];
+    hourly: { hour: number; records: number; total_mm: number; avg_mm: number }[];
+    districts: { district_code: string; areas: number; records: number; total_mm: number; avg_mm: number }[];
+  };
+  risk: {
+    calculated_at: string | null;
+    avg_score: number;
+    min_score: number;
+    max_score: number;
+    levels: { level: string; count: number }[];
+    score_distribution: { bucket: string; count: number }[];
+    components: { key: string; label: string; avg: number }[];
+    districts: { district_code: string; areas: number; avg_score: number; max_score: number; medium_count: number }[];
+    regencies: { regency_code: string; regency_name: string; areas: number; total_mm: number; avg_score: number; medium_count: number }[];
+    top_areas: {
+      area_name: string;
+      area_slug: string;
+      area_code: string | null;
+      district_code: string | null;
+      regency_code: string | null;
+      score: number;
+      risk_level: string;
+      rainfall_score: number;
+      history_score: number;
+      environment_score: number;
+      drainage_score: number;
+    }[];
+  };
+  source: { rainfall: string; risk: string };
+  updated_at: string | null;
+};
+
 type Paginated<T> = { data: T[] };
 
 const apiBaseUrl = process.env.NEXT_PUBLIC_API_URL ?? "/api";
 
+// Server-side rendering cannot resolve a relative `/api` URL, so fall back to
+// the same origin the rewrite proxies to.
+function apiUrl(path: string): string {
+  if (/^https?:\/\//.test(apiBaseUrl)) return `${apiBaseUrl}${path}`;
+  if (typeof window === "undefined") return `${API_ORIGIN}${apiBaseUrl}${path}`;
+  return `${apiBaseUrl}${path}`;
+}
+
 async function getJson<T>(path: string): Promise<T> {
-  const response = await fetch(`${apiBaseUrl}${path}`, { cache: "no-store" });
+  const response = await fetch(apiUrl(path), { cache: "no-store" });
   if (!response.ok) {
     let message = `API request failed: ${response.status}`;
     try {
@@ -230,9 +284,8 @@ export type ApiCurrentWeather = {
 };
 
 export async function getAreaCurrentWeather(slug: string): Promise<ApiCurrentWeather> {
-  const cacheBuster = `?t=${Date.now()}`;
   const response = await getJson<{ data: ApiCurrentWeather }>(
-    `/v1/areas/${encodeURIComponent(slug)}/current-weather${cacheBuster}`,
+    `/v1/areas/${encodeURIComponent(slug)}/current-weather`,
   );
   return response.data;
 }
@@ -251,5 +304,11 @@ export async function getFloodHistoryByYear(year: number, regencyCode?: string):
   const params = new URLSearchParams({ year: String(year) });
   if (regencyCode) params.set("regency_code", regencyCode);
   const response = await getJson<{ data: ApiFloodHistory }>(`/v1/flood-events?${params.toString()}`);
+  return response.data;
+}
+
+export async function getHistorySummary(regencyCode?: string): Promise<ApiHistorySummary> {
+  const params = regencyCode ? `?regency_code=${encodeURIComponent(regencyCode)}` : "";
+  const response = await getJson<{ data: ApiHistorySummary }>(`/v1/history/summary${params}`);
   return response.data;
 }

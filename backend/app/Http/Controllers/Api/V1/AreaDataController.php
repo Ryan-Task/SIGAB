@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 
@@ -151,8 +152,21 @@ class AreaDataController extends Controller
             return null;
         }
 
+        // The provider is polled by both /risk and /current-weather, so share one
+        // short-lived snapshot per area instead of paying the upstream latency twice.
+        $cached = Cache::remember(
+            sprintf('open_meteo.current_weather.%d', $area->id),
+            60,
+            fn (): array => ['weather' => $this->requestCurrentWeather($area)],
+        );
+
+        return $cached['weather'] ?? null;
+    }
+
+    private function requestCurrentWeather(object $area): ?array
+    {
         try {
-            $response = Http::timeout(10)->retry(2, 200)->get('https://api.open-meteo.com/v1/forecast', [
+            $response = Http::timeout(4)->retry(1, 150)->get('https://api.open-meteo.com/v1/forecast', [
                 'latitude' => $area->centroid_lat,
                 'longitude' => $area->centroid_lng,
                 'current' => 'precipitation,rain,showers,weather_code',
@@ -386,7 +400,7 @@ class AreaDataController extends Controller
             ->where('areas.is_active', true)
             ->whereIn('areas.regency_code', self::FOCUS_REGENCY_CODES)
             ->whereNotNull('events.started_at')
-            ->selectRaw("strftime('%Y', events.started_at) as year")
+            ->selectRaw('YEAR(events.started_at) as year')
             ->distinct()
             ->orderByDesc('year')
             ->pluck('year')
@@ -394,6 +408,211 @@ class AreaDataController extends Controller
             ->values();
 
         return response()->json(['data' => $years]);
+    }
+
+    public function historySummary(Request $request): JsonResponse
+    {
+        $regencyCode = $request->string('regency_code')->toString();
+        if ($regencyCode !== '' && ! in_array($regencyCode, self::FOCUS_REGENCY_CODES, true)) {
+            return response()->json(['message' => 'Unsupported regency code.'], 422);
+        }
+
+        $areasQuery = DB::table('areas')
+            ->where('is_active', true)
+            ->whereIn('regency_code', self::FOCUS_REGENCY_CODES);
+        if ($regencyCode !== '') {
+            $areasQuery->where('regency_code', $regencyCode);
+        }
+        $areaIds = $areasQuery->pluck('id');
+        $areaCount = $areaIds->count();
+
+        $rainfallDaily = DB::table('rainfall_records')
+            ->whereIn('area_id', $areaIds)
+            ->selectRaw('DATE(observed_at) as day, COUNT(*) as records, SUM(rainfall_mm) as total_mm, AVG(rainfall_mm) as avg_mm, COUNT(DISTINCT area_id) as areas')
+            ->groupByRaw('DATE(observed_at)')
+            ->orderBy('day')
+            ->get();
+
+        $rainfallHourly = DB::table('rainfall_records')
+            ->whereIn('area_id', $areaIds)
+            ->selectRaw('HOUR(observed_at) as hour, COUNT(*) as records, SUM(rainfall_mm) as total_mm, AVG(rainfall_mm) as avg_mm')
+            ->groupByRaw('HOUR(observed_at)')
+            ->orderBy('hour')
+            ->get();
+
+        $rainfallDistricts = DB::table('rainfall_records as rainfall')
+            ->join('areas', 'areas.id', '=', 'rainfall.area_id')
+            ->whereIn('rainfall.area_id', $areaIds)
+            ->selectRaw("SUBSTRING_INDEX(areas.code, '.', 3) as district_code, SUM(rainfall.rainfall_mm) as total_mm, AVG(rainfall.rainfall_mm) as avg_mm, COUNT(*) as records, COUNT(DISTINCT rainfall.area_id) as areas")
+            ->groupByRaw("SUBSTRING_INDEX(areas.code, '.', 3)")
+            ->orderByDesc('total_mm')
+            ->get();
+
+        $rainStats = DB::table('rainfall_records')
+            ->whereIn('area_id', $areaIds)
+            ->selectRaw('SUM(CASE WHEN rainfall_mm > 0 THEN 1 ELSE 0 END) as rain_records, COUNT(DISTINCT CASE WHEN rainfall_mm > 0 THEN DATE(observed_at) END) as wet_days')
+            ->first();
+
+        $latestIds = DB::table('risk_predictions')
+            ->select('area_id', DB::raw('MAX(id) as latest_id'))
+            ->groupBy('area_id');
+        $predictions = DB::table('risk_predictions as predictions')
+            ->joinSub($latestIds, 'latest', function ($join): void {
+                $join->on('predictions.id', '=', 'latest.latest_id');
+            })
+            ->join('areas', 'areas.id', '=', 'predictions.area_id')
+            ->whereIn('predictions.area_id', $areaIds)
+            ->select([
+                'predictions.score',
+                'predictions.risk_level',
+                'predictions.rainfall_score',
+                'predictions.history_score',
+                'predictions.environment_score',
+                'predictions.drainage_score',
+                'predictions.calculated_at',
+                'predictions.data_as_of',
+                'areas.name as area_name',
+                'areas.slug as area_slug',
+                'areas.code as area_code',
+                'areas.regency_code',
+            ])
+            ->get();
+
+        $buckets = [];
+        for ($index = 0; $index <= 10; $index++) {
+            $buckets[$index] = [
+                'bucket' => $index === 10 ? '100' : sprintf('%d-%d', $index * 10, $index === 9 ? 99 : $index * 10 + 9),
+                'count' => 0,
+            ];
+        }
+        foreach ($predictions as $prediction) {
+            $bucketIndex = min(10, (int) floor(((int) $prediction->score) / 10));
+            $buckets[$bucketIndex]['count']++;
+        }
+        $scoreDistribution = collect($buckets);
+
+        $levelCounts = $predictions->groupBy('risk_level')
+            ->map(fn ($group, string $level): array => ['level' => $level, 'count' => $group->count()])
+            ->values();
+
+        $districtRisk = $predictions
+            ->groupBy(fn (object $prediction): string => substr((string) $prediction->area_code, 0, 8))
+            ->map(fn ($group, string $districtCode): array => [
+                'district_code' => $districtCode,
+                'areas' => $group->count(),
+                'avg_score' => round((float) $group->avg('score'), 1),
+                'max_score' => (int) $group->max('score'),
+                'medium_count' => $group->filter(fn (object $p): bool => $p->risk_level !== 'low')->count(),
+            ])
+            ->sortByDesc('avg_score')
+            ->values();
+
+        $regencies = $regencyCode !== ''
+            ? collect()
+            : DB::table('rainfall_records as rainfall')
+                ->join('areas', 'areas.id', '=', 'rainfall.area_id')
+                ->whereIn('rainfall.area_id', $areaIds)
+                ->select('areas.regency_code')
+                ->groupBy('areas.regency_code')
+                ->selectRaw('areas.regency_code, COUNT(DISTINCT rainfall.area_id) as areas, SUM(rainfall.rainfall_mm) as total_mm')
+                ->get()
+                ->map(function (object $row) use ($predictions): array {
+                    $regencyPredictions = $predictions->filter(fn (object $p): bool => $p->regency_code === $row->regency_code);
+                    return [
+                        'regency_code' => $row->regency_code,
+                        'regency_name' => $this->regencyName($row->regency_code),
+                        'areas' => (int) $row->areas,
+                        'total_mm' => round((float) $row->total_mm, 1),
+                        'avg_score' => round((float) $regencyPredictions->avg('score'), 1),
+                        'medium_count' => $regencyPredictions->filter(fn (object $p): bool => $p->risk_level !== 'low')->count(),
+                    ];
+                })
+                ->values();
+
+        $topAreas = $predictions
+            ->sortByDesc('score')
+            ->take(15)
+            ->map(fn (object $prediction): array => [
+                'area_name' => $prediction->area_name,
+                'area_slug' => $prediction->area_slug,
+                'area_code' => $prediction->area_code,
+                'district_code' => substr((string) $prediction->area_code, 0, 8),
+                'regency_code' => $prediction->regency_code,
+                'score' => (int) $prediction->score,
+                'risk_level' => $prediction->risk_level,
+                'rainfall_score' => round((float) $prediction->rainfall_score, 1),
+                'history_score' => round((float) $prediction->history_score, 1),
+                'environment_score' => round((float) $prediction->environment_score, 1),
+                'drainage_score' => round((float) $prediction->drainage_score, 1),
+            ])
+            ->values();
+
+        return response()->json([
+            'data' => [
+                'regency_code' => $regencyCode !== '' ? $regencyCode : null,
+                'area_count' => $areaCount,
+                'rainfall' => [
+                    'record_count' => (int) $rainfallDaily->sum('records'),
+                    'rain_record_count' => (int) ($rainStats->rain_records ?? 0),
+                    'wet_day_count' => (int) ($rainStats->wet_days ?? 0),
+                    'total_mm' => round((float) $rainfallDaily->sum('total_mm'), 1),
+                    'avg_mm_per_area' => $areaCount > 0 ? round((float) $rainfallDaily->sum('total_mm') / $areaCount, 1) : 0.0,
+                    'from' => $rainfallDaily->min('day'),
+                    'to' => $rainfallDaily->max('day'),
+                    'daily' => $rainfallDaily->map(fn (object $row): array => [
+                        'day' => $row->day,
+                        'records' => (int) $row->records,
+                        'total_mm' => round((float) $row->total_mm, 1),
+                        'avg_mm' => round((float) $row->avg_mm, 2),
+                        'areas' => (int) $row->areas,
+                    ])->values(),
+                    'hourly' => $rainfallHourly->map(fn (object $row): array => [
+                        'hour' => (int) $row->hour,
+                        'records' => (int) $row->records,
+                        'total_mm' => round((float) $row->total_mm, 1),
+                        'avg_mm' => round((float) $row->avg_mm, 2),
+                    ])->values(),
+                    'districts' => $rainfallDistricts->map(fn (object $row): array => [
+                        'district_code' => $row->district_code,
+                        'areas' => (int) $row->areas,
+                        'records' => (int) $row->records,
+                        'total_mm' => round((float) $row->total_mm, 1),
+                        'avg_mm' => round((float) $row->avg_mm, 2),
+                    ])->values(),
+                ],
+                'risk' => [
+                    'calculated_at' => $predictions->max('calculated_at'),
+                    'avg_score' => round((float) $predictions->avg('score'), 1),
+                    'min_score' => (int) ($predictions->min('score') ?? 0),
+                    'max_score' => (int) ($predictions->max('score') ?? 0),
+                    'levels' => $levelCounts,
+                    'score_distribution' => $scoreDistribution->values(),
+                    'components' => [
+                        ['key' => 'rainfall', 'label' => 'Curah hujan', 'avg' => round((float) $predictions->avg('rainfall_score'), 1)],
+                        ['key' => 'history', 'label' => 'Riwayat banjir', 'avg' => round((float) $predictions->avg('history_score'), 1)],
+                        ['key' => 'environment', 'label' => 'Lingkungan', 'avg' => round((float) $predictions->avg('environment_score'), 1)],
+                        ['key' => 'drainage', 'label' => 'Drainase', 'avg' => round((float) $predictions->avg('drainage_score'), 1)],
+                    ],
+                    'districts' => $districtRisk,
+                    'regencies' => $regencies,
+                    'top_areas' => $topAreas,
+                ],
+                'source' => [
+                    'rainfall' => 'BMKG (tercatat via SIGAB)',
+                    'risk' => 'Model risiko SIGAB',
+                ],
+                'updated_at' => now()->toIso8601String(),
+            ],
+        ]);
+    }
+
+    private function regencyName(string $code): string
+    {
+        return match ($code) {
+            '35.15' => 'Kabupaten Sidoarjo',
+            '35.78' => 'Kota Surabaya',
+            default => $code,
+        };
     }
 
     private function findArea(string $slug): object
@@ -589,15 +808,22 @@ class AreaDataController extends Controller
         return $explanation;
     }
 
+    /** @var array<int, int|null> */
+    private array $historyCountCache = [];
+
     private function historyCount(int $areaId): ?int
     {
+        if (array_key_exists($areaId, $this->historyCountCache)) {
+            return $this->historyCountCache[$areaId];
+        }
+
         $count = DB::table('flood_events')
             ->where('area_id', $areaId)
             ->where('started_at', '>=', now()->subYear())
             ->where('verification_status', 'source_reported')
             ->count();
 
-        return $count === 0 ? null : $count;
+        return $this->historyCountCache[$areaId] = $count === 0 ? null : $count;
     }
 
     private function historyFrequency(int $count): string
