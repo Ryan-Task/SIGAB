@@ -110,7 +110,7 @@ export default function DataHistorisPage() {
         <div className="mx-auto max-w-[1180px]">
           <p className="text-xs font-bold uppercase tracking-[0.22em] text-[#26669a]">Membaca pola</p>
           <h1 className="mt-4 max-w-4xl text-5xl font-semibold leading-[0.95] tracking-[-0.08em] text-[#123d61] sm:text-7xl">Belajar dari<br />air yang pernah datang.</h1>
-          <p className="mt-6 max-w-xl text-base leading-8 text-slate-600">Data historis curah hujan dan skor risiko yang benar-benar tercatat di sistem untuk Surabaya dan Sidoarjo — ditampilkan sebagai diagram, bukan angka ilustrasi.</p>
+          <p className="mt-6 max-w-xl text-base leading-8 text-slate-600">Data historis curah hujan dan skor risiko yang benar-benar tercatat di sistem untuk Surabaya dan Sidoarjo ditampilkan sebagai diagram, bukan angka ilustrasi.</p>
         </div>
       </section>
 

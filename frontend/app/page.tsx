@@ -210,7 +210,7 @@ export default function Home() {
               SIGAB menerjemahkan kondisi lapangan menjadi informasi yang membantu Anda mengenali risiko dan menyiapkan langkah berikutnya.
             </p>
             <Link href="/peta-risiko" className="mt-8 inline-flex items-center gap-2 text-sm font-bold text-[#26669a] transition hover:text-[#f38a50]">
-              Lihat peta risiko <span aria-hidden="true">↗</span>
+              Lihat peta risiko
             </Link>
           </motion.div>
 
@@ -300,7 +300,6 @@ export default function Home() {
           {[...tickerItems, ...tickerItems].map((item, index) => (
             <div key={`${item}-${index}`} className="flex items-center gap-8 text-sm font-bold uppercase tracking-[0.16em]">
               <span>{item}</span>
-              <span className="text-xl text-[#f38a50]">✳</span>
             </div>
           ))}
         </motion.div>
@@ -353,7 +352,7 @@ export default function Home() {
               <h3 className="max-w-xl text-3xl font-semibold leading-tight tracking-[-0.06em] sm:text-5xl">{story.title}</h3>
               <p className="mt-5 max-w-lg text-base leading-8 text-sky-100/75">{story.description}</p>
               <Link href={story.href} className="mt-8 inline-flex items-center gap-2 text-sm font-bold text-[#82d4d0] transition hover:text-[#f38a50]">
-                Jelajahi fitur <span aria-hidden="true">↗</span>
+                Jelajahi fitur
               </Link>
             </div>
           </motion.div>
@@ -432,7 +431,6 @@ export default function Home() {
                   className="inline-flex shrink-0 items-center justify-center gap-3 rounded-full bg-[#f38a50] px-5 py-3 text-sm font-bold text-[#123d61] transition hover:bg-[#ff9d67]"
                 >
                   Download PDF
-                  <span aria-hidden="true">↓</span>
                 </a>
               </div>
             </div>
