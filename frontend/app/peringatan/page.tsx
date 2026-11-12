@@ -136,7 +136,33 @@ function buildDetail(p: ApiPrediction): string {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
     const [regionKey, setRegionKey] = useState<string>("sby-pusat");
+  const [districtCodeFilter, setDistrictCodeFilter] = useState<string | null>(null);
   const [regencyFilter, setRegencyFilter] = useState<string>("all");
+
+  const syncPredictionSlugs = (slugs: string[]) => {
+    if (slugs.length === 0) return;
+    void Promise.allSettled(slugs.map((slug) => getAreaRisk(slug))).then((results) => {
+      const realtimeBySlug = new Map<string, ApiRiskPrediction>();
+      results.forEach((result, index) => {
+        if (result.status === "fulfilled" && result.value.prediction) {
+          realtimeBySlug.set(slugs[index], result.value.prediction);
+        }
+      });
+      if (realtimeBySlug.size === 0) return;
+      setPredictions((current) => current.map((prediction) => {
+        const realtime = realtimeBySlug.get(prediction.slug);
+        if (!realtime) return prediction;
+        return {
+          ...prediction,
+          score: realtime.score,
+          risk_level: realtime.risk_level,
+          current_weather_score: realtime.current_weather_score ?? prediction.current_weather_score,
+          realtime_calculated_at: realtime.realtime_calculated_at ?? prediction.realtime_calculated_at,
+          explanation: realtime.explanation ?? prediction.explanation,
+        };
+      }));
+    });
+  };
 
   useEffect(() => {
       let cancelled = false;
@@ -158,7 +184,7 @@ function buildDetail(p: ApiPrediction): string {
             const candidates = [...stored]
               .filter((p) => p.score != null && p.score > 0)
               .sort((left, right) => (right.score ?? 0) - (left.score ?? 0))
-              .slice(0, REALTIME_SYNC_COUNT);
+              .slice(0, Math.max(MAX_AREAS, REALTIME_SYNC_COUNT));
             const realtimeResults = await Promise.allSettled(
               candidates.map((p) => getAreaRisk(p.slug)),
             );
@@ -238,10 +264,9 @@ function buildDetail(p: ApiPrediction): string {
   }
 
   // Build integrated alerts from predictions + environment data
-  const alerts = predictions
+  const allAlerts = predictions
     .filter((p) => p.score != null && p.score > 0)
       .sort((left, right) => (right.score ?? 0) - (left.score ?? 0))
-      .slice(0, MAX_AREAS)
     .map((p) => {
       const area = areas.find((a) => a.slug === p.slug);
             const locationLabel = regencyLabel(p.regency_code ?? area?.regency_code ?? null)
@@ -258,9 +283,19 @@ function buildDetail(p: ApiPrediction): string {
                           ? new Date(timeSource.replace(" ", "T")).toLocaleString("id-ID", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })
                           : "Baru saja";
             const detail = buildDetail(p);
-            return { area: locationLabel, title: p.name, level, time: timeAgo, detail, score: p.score, slug: p.slug };
+            return {
+              area: locationLabel,
+              title: p.name,
+              level,
+              time: timeAgo,
+              detail,
+              score: p.score,
+              slug: p.slug,
+              districtCode: districtCode(p),
+            };
     });
 
+        const alerts = allAlerts.slice(0, MAX_AREAS);
         if (alerts.length === 0) {
           return (
             <main className="min-h-screen bg-[#dfeaf0] text-slate-800">
@@ -276,8 +311,6 @@ function buildDetail(p: ApiPrediction): string {
             </main>
           );
         }
-
-        const selected = alerts[Math.min(active, alerts.length - 1)];
 
                 // Stats per wilayah besar (grup kecamatan)
                 const regionStats = REGIONS.map((r) => {
@@ -326,6 +359,12 @@ function buildDetail(p: ApiPrediction): string {
                     })
                   : [];
 
+                const districtAlerts = districtCodeFilter
+                  ? allAlerts.filter((alert) => alert.districtCode === districtCodeFilter)
+                  : alerts;
+                const visibleAlerts = districtAlerts.length > 0 ? districtAlerts : alerts;
+                const selected = visibleAlerts[Math.min(active, visibleAlerts.length - 1)];
+
                 return (
     <main className="min-h-screen bg-[#dfeaf0] text-slate-800">
       <SiteNav />
@@ -356,7 +395,11 @@ function buildDetail(p: ApiPrediction): string {
                                   const v = e.target.value;
                                   setRegencyFilter(v);
                                   const first = REGIONS.find((r) => v === "all" || r.regency === v);
-                                  if (first) setRegionKey(first.key);
+                                  if (first) {
+                                    setRegionKey(first.key);
+                                    setDistrictCodeFilter(null);
+                                    setActive(0);
+                                  }
                                 }}
                 className="rounded-full border border-[#26669a]/25 bg-white px-5 py-3 text-sm font-semibold text-[#123d61] outline-none transition hover:border-[#26669a]/60"
               >
@@ -366,7 +409,11 @@ function buildDetail(p: ApiPrediction): string {
               </select>
               <select
                 value={regionKey}
-                onChange={(e) => setRegionKey(e.target.value)}
+                onChange={(e) => {
+                  setRegionKey(e.target.value);
+                  setDistrictCodeFilter(null);
+                  setActive(0);
+                }}
                 className="rounded-full border border-[#26669a]/25 bg-white px-5 py-3 text-sm font-semibold text-[#123d61] outline-none transition hover:border-[#26669a]/60"
               >
                 {visibleRegions.map((r) => (
@@ -386,7 +433,11 @@ function buildDetail(p: ApiPrediction): string {
               <button
                 key={r.key}
                 type="button"
-                onClick={() => setRegionKey(r.key)}
+                onClick={() => {
+                  setRegionKey(r.key);
+                  setDistrictCodeFilter(null);
+                  setActive(0);
+                }}
                 className={`rounded-3xl p-6 text-left transition ${activeRegion ? "bg-[#123d61] text-white shadow-[0_12px_30px_rgba(18,61,97,0.25)]" : "bg-[#f0e7e2] hover:bg-[#e8ded8]"}`}
               >
                 <div className="flex items-start justify-between gap-3">
@@ -417,15 +468,26 @@ function buildDetail(p: ApiPrediction): string {
             </div>
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
               {currentDistricts.map((d) => (
-                <div key={d.code} className={`rounded-2xl border p-4 ${d.raining ? "border-[#f38a50]/50 bg-[#f38a50]/10" : "border-[#26669a]/10 bg-white"}`}>
+                <button
+                  key={d.code}
+                  type="button"
+                  onClick={() => {
+                    setDistrictCodeFilter(d.code);
+                    setActive(0);
+                    syncPredictionSlugs(
+                      predictions.filter((prediction) => districtCode(prediction) === d.code).map((prediction) => prediction.slug),
+                    );
+                  }}
+                  className={`w-full rounded-2xl border p-4 text-left transition hover:border-[#26669a]/40 ${districtCodeFilter === d.code ? "border-[#123d61] bg-[#123d61] text-white shadow-[0_8px_20px_rgba(18,61,97,0.18)]" : d.raining ? "border-[#f38a50]/50 bg-[#f38a50]/10" : "border-[#26669a]/10 bg-white"}`}
+                >
                   <div className="flex items-center justify-between gap-2">
-                    <p className="font-semibold text-[#123d61]">{d.name}</p>
+                    <p className={`font-semibold ${districtCodeFilter === d.code ? "text-white" : "text-[#123d61]"}`}>{d.name}</p>
                     <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${d.raining ? "bg-[#f38a50]" : "bg-[#82d4d0]"}`} />
                   </div>
-                  <p className="mt-1 text-xs text-slate-500">
+                  <p className={`mt-1 text-xs ${districtCodeFilter === d.code ? "text-sky-100/75" : "text-slate-500"}`}>
                     {d.areaCount} wilayah · {d.raining ? `${d.rainingCount} sedang hujan` : "tidak hujan"}
                   </p>
-                </div>
+                </button>
               ))}
             </div>
           </div>
@@ -452,11 +514,21 @@ function buildDetail(p: ApiPrediction): string {
 
           <div className="space-y-3">
             <div className="mb-5 flex items-center justify-between">
-              <p className="text-xs font-bold uppercase tracking-[0.2em] text-[#26669a]">Daftar status</p>
-              <span className="text-xs text-slate-500">{alerts.length} wilayah dipantau</span>
+              <p className="text-xs font-bold uppercase tracking-[0.2em] text-[#26669a]">
+                {districtCodeFilter ? `Wilayah di ${KECAMATAN[districtCodeFilter] ?? districtCodeFilter}` : "Daftar status"}
+              </p>
+              <span className="text-xs text-slate-500">{visibleAlerts.length} wilayah dipantau</span>
             </div>
-            {alerts.map((alert, index) => (
-                          <button key={alert.slug} type="button" onClick={() => setActive(index)} className={`group flex w-full items-center gap-4 rounded-2xl p-4 text-left transition ${index === active ? "bg-white shadow-[0_12px_30px_rgba(38,102,154,0.12)]" : "hover:bg-white/60"}`}>
+            {visibleAlerts.map((alert, index) => (
+                          <button
+                            key={alert.slug}
+                            type="button"
+                            onClick={() => {
+                              setActive(index);
+                              syncPredictionSlugs([alert.slug]);
+                            }}
+                            className={`group flex w-full items-center gap-4 rounded-2xl p-4 text-left transition ${index === active ? "bg-white shadow-[0_12px_30px_rgba(38,102,154,0.12)]" : "hover:bg-white/60"}`}
+                          >
                 <span className={`h-3 w-3 shrink-0 rounded-full ${alert.level === "Tinggi" ? "bg-[#f38a50]" : alert.level === "Sedang" ? "bg-[#82d4d0]" : "bg-[#26669a]"}`} />
                 <span className="min-w-0 flex-1"><span className="block font-semibold text-[#123d61]">{alert.title}</span><span className="mt-1 block truncate text-sm text-slate-500">{alert.area} · {alert.level} · {alert.score ?? "—"} pts</span></span>
                 <span className="text-slate-400 transition group-hover:translate-x-1">→</span>

@@ -369,6 +369,7 @@ class AreaDataController extends Controller
         }
 
         $events = $query->limit(500)->get();
+        $sourceEvent = $events->first(fn (object $event): bool => $event->source_name !== null);
         $monthly = $events
             ->filter(fn (object $event): bool => $event->started_at !== null)
             ->groupBy(fn (object $event): string => substr((string) $event->started_at, 0, 7))
@@ -385,8 +386,8 @@ class AreaDataController extends Controller
                 'regency_code' => $regencyCode !== '' ? $regencyCode : null,
                 'total' => $events->count(),
                 'updated_at' => $events->max('updated_at'),
-                'source' => 'DIBI BNPB',
-                'source_url' => 'https://dibi.bnpb.go.id/',
+                'source' => $sourceEvent?->source_name ?? 'DIBI BNPB',
+                'source_url' => $sourceEvent?->source_url ?? 'https://dibi.bnpb.go.id/',
                 'events' => $events,
                 'monthly' => $monthly,
             ],
@@ -395,12 +396,16 @@ class AreaDataController extends Controller
 
     public function floodEventYears(): JsonResponse
     {
+        $yearExpression = DB::connection()->getDriverName() === 'sqlite'
+            ? "strftime('%Y', events.started_at)"
+            : 'YEAR(events.started_at)';
+
         $years = DB::table('flood_events as events')
             ->join('areas', 'areas.id', '=', 'events.area_id')
             ->where('areas.is_active', true)
             ->whereIn('areas.regency_code', self::FOCUS_REGENCY_CODES)
             ->whereNotNull('events.started_at')
-            ->selectRaw('YEAR(events.started_at) as year')
+            ->selectRaw("{$yearExpression} as year")
             ->distinct()
             ->orderByDesc('year')
             ->pluck('year')
@@ -412,6 +417,14 @@ class AreaDataController extends Controller
 
     public function historySummary(Request $request): JsonResponse
     {
+        $isSqlite = DB::connection()->getDriverName() === 'sqlite';
+        $hourExpression = $isSqlite
+            ? "CAST(strftime('%H', observed_at) AS INTEGER)"
+            : 'HOUR(observed_at)';
+        $districtExpression = $isSqlite
+            ? 'substr(areas.code, 1, 8)'
+            : "SUBSTRING_INDEX(areas.code, '.', 3)";
+
         $regencyCode = $request->string('regency_code')->toString();
         if ($regencyCode !== '' && ! in_array($regencyCode, self::FOCUS_REGENCY_CODES, true)) {
             return response()->json(['message' => 'Unsupported regency code.'], 422);
@@ -435,16 +448,16 @@ class AreaDataController extends Controller
 
         $rainfallHourly = DB::table('rainfall_records')
             ->whereIn('area_id', $areaIds)
-            ->selectRaw('HOUR(observed_at) as hour, COUNT(*) as records, SUM(rainfall_mm) as total_mm, AVG(rainfall_mm) as avg_mm')
-            ->groupByRaw('HOUR(observed_at)')
+            ->selectRaw("{$hourExpression} as hour, COUNT(*) as records, SUM(rainfall_mm) as total_mm, AVG(rainfall_mm) as avg_mm")
+            ->groupByRaw($hourExpression)
             ->orderBy('hour')
             ->get();
 
         $rainfallDistricts = DB::table('rainfall_records as rainfall')
             ->join('areas', 'areas.id', '=', 'rainfall.area_id')
             ->whereIn('rainfall.area_id', $areaIds)
-            ->selectRaw("SUBSTRING_INDEX(areas.code, '.', 3) as district_code, SUM(rainfall.rainfall_mm) as total_mm, AVG(rainfall.rainfall_mm) as avg_mm, COUNT(*) as records, COUNT(DISTINCT rainfall.area_id) as areas")
-            ->groupByRaw("SUBSTRING_INDEX(areas.code, '.', 3)")
+            ->selectRaw("{$districtExpression} as district_code, SUM(rainfall.rainfall_mm) as total_mm, AVG(rainfall.rainfall_mm) as avg_mm, COUNT(*) as records, COUNT(DISTINCT rainfall.area_id) as areas")
+            ->groupByRaw($districtExpression)
             ->orderByDesc('total_mm')
             ->get();
 
@@ -477,6 +490,18 @@ class AreaDataController extends Controller
                 'areas.regency_code',
             ])
             ->get();
+
+        $floodCountsByArea = DB::table('flood_events')
+            ->whereIn('area_id', $areaIds)
+            ->where('verification_status', 'source_reported')
+            ->selectRaw('area_id, COUNT(*) as event_count')
+            ->groupBy('area_id')
+            ->pluck('event_count', 'area_id');
+        $historicalScores = $areaIds->map(function ($areaId) use ($floodCountsByArea): float {
+            $count = (int) ($floodCountsByArea[$areaId] ?? 0);
+
+            return $count > 5 ? 100.0 : ($count >= 2 ? 60.0 : ($count === 1 ? 20.0 : 0.0));
+        });
 
         $buckets = [];
         for ($index = 0; $index <= 10; $index++) {
@@ -589,7 +614,7 @@ class AreaDataController extends Controller
                     'score_distribution' => $scoreDistribution->values(),
                     'components' => [
                         ['key' => 'rainfall', 'label' => 'Curah hujan', 'avg' => round((float) $predictions->avg('rainfall_score'), 1)],
-                        ['key' => 'history', 'label' => 'Riwayat banjir', 'avg' => round((float) $predictions->avg('history_score'), 1)],
+                        ['key' => 'history', 'label' => 'Riwayat banjir', 'avg' => round((float) $historicalScores->avg(), 1)],
                         ['key' => 'environment', 'label' => 'Lingkungan', 'avg' => round((float) $predictions->avg('environment_score'), 1)],
                         ['key' => 'drainage', 'label' => 'Drainase', 'avg' => round((float) $predictions->avg('drainage_score'), 1)],
                     ],
