@@ -213,7 +213,7 @@ export default function PetaRisikoPage() {
               <h1 className="mt-4 text-5xl font-semibold leading-[0.95] tracking-[-0.08em] text-[#123d61] sm:text-7xl">
                 Peta risiko,<br />dibuat mudah dipahami.
               </h1>
-              <p className="mt-6 max-w-xl text-base leading-8 text-slate-600">
+              <p className="mt-6 max-w-7xl text-base leading-8 text-slate-600">
                 Jelajahi gambaran risiko banjir per wilayah. Pilih area untuk melihat status, skor risiko banjir, dan faktor yang perlu diperhatikan.
               </p>
             </div>

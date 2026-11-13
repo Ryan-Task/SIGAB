@@ -431,7 +431,6 @@ export default function Home() {
                   className="inline-flex shrink-0 items-center justify-center gap-3 rounded-full bg-[#f38a50] px-5 py-3 text-sm font-bold text-[#123d61] transition hover:bg-[#ff9d67]"
                 >
                   Download PDF
-                  <span aria-hidden="true">↓</span>
                 </a>
               </div>
             </div>
