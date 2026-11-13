@@ -14,6 +14,28 @@ class AreaDataController extends Controller
 {
     private const FOCUS_REGENCY_CODES = ['35.15', '35.78'];
 
+    /**
+     * Score components, ordered. This is the single scoring formula for every
+     * endpoint, so a stored prediction can never disagree with the realtime view.
+     */
+    private const COMPONENT_WEIGHTS = [
+        'rainfall' => 0.30,
+        'current_weather' => 0.30,
+        'history' => 0.25,
+        'environment' => 0.05,
+        'drainage' => 0.10,
+    ];
+
+    /**
+     * Villages inside one district share a near-identical weather snapshot, so the
+     * provider is polled once per district instead of once per village. One request
+     * carrying every district keeps the whole area list on the same snapshot and
+     * stays far below the provider rate limit.
+     */
+    private const DISTRICT_WEATHER_CACHE_KEY = 'open_meteo.district_weather.v1';
+
+    private const DISTRICT_WEATHER_TTL_SECONDS = 300;
+
     public function index(Request $request): JsonResponse
     {
         $query = DB::table('areas')
@@ -73,7 +95,7 @@ class AreaDataController extends Controller
             ->first();
         $predictionPayload = $prediction === null
             ? null
-            : $this->realtimePredictionPayload($prediction, $this->fetchCurrentWeather($area));
+            : $this->realtimePredictionPayload($prediction, $this->areaWeather($area));
 
         return response()->json([
             'data' => [
@@ -137,7 +159,7 @@ class AreaDataController extends Controller
         $area = $this->findArea($slug);
         abort_if($area->centroid_lat === null || $area->centroid_lng === null, 422, 'Area coordinates are unavailable.');
 
-        $weather = $this->fetchCurrentWeather($area);
+        $weather = $this->areaWeather($area);
         if ($weather === null) {
             return response()->json(['message' => 'Current weather provider is unavailable.'], 502);
         }
@@ -182,7 +204,17 @@ class AreaDataController extends Controller
             return null;
         }
 
-        $payload = $response->json();
+        return $this->weatherFromPayload($response->json());
+    }
+
+    /**
+     * @param  mixed  $payload  Raw Open-Meteo payload for one coordinate.
+     */
+    private function weatherFromPayload(mixed $payload): ?array
+    {
+        if (! is_array($payload)) {
+            return null;
+        }
         $current = is_array($payload['current'] ?? null) ? $payload['current'] : [];
         $times = $payload['hourly']['time'] ?? [];
         $precipitation = $payload['hourly']['precipitation'] ?? [];
@@ -247,6 +279,156 @@ class AreaDataController extends Controller
         return $weather;
     }
 
+    /**
+     * Area codes follow the BPS hierarchy (province.regency.district.village), so
+     * the first three segments identify the district an area belongs to.
+     */
+    private function districtKey(object $area): ?string
+    {
+        $segments = explode('.', (string) ($area->code ?? ''));
+        if (count($segments) < 3) {
+            return null;
+        }
+
+        return implode('.', array_slice($segments, 0, 3));
+    }
+
+    /**
+     * Current weather per district for every focused area, from one provider request.
+     * Villages inside a district share a near-identical snapshot, so this keeps all
+     * areas on the same upstream observation and reuses it for the whole TTL. Both
+     * /v1/areas/{slug}/risk and /v1/predictions/latest read this, which is what makes
+     * their scores agree.
+     *
+     * @return array<string, array>  Keyed by district code, plus "area:{id}" fallbacks.
+     */
+    private function districtWeatherSnapshots(): array
+    {
+        if ($this->districtSnapshots !== null) {
+            return $this->districtSnapshots;
+        }
+
+        $areas = DB::table('areas')
+            ->where('is_active', true)
+            ->whereIn('regency_code', self::FOCUS_REGENCY_CODES)
+            ->whereNotNull('centroid_lat')
+            ->whereNotNull('centroid_lng')
+            ->select(['id', 'code', 'centroid_lat', 'centroid_lng'])
+            ->get();
+
+        $districts = [];
+        $fallbackAreas = [];
+        foreach ($areas as $area) {
+            $districtKey = $this->districtKey($area);
+            if ($districtKey === null) {
+                $fallbackAreas[] = $area;
+                continue;
+            }
+            $districts[$districtKey] ??= [
+                'latitude' => $area->centroid_lat,
+                'longitude' => $area->centroid_lng,
+            ];
+        }
+
+        $version = crc32(implode(',', array_keys($districts)) . '|' . count($fallbackAreas));
+        $cached = Cache::get(self::DISTRICT_WEATHER_CACHE_KEY);
+        if (
+            is_array($cached)
+            && ($cached['version'] ?? null) === $version
+            && is_array($cached['snapshots'] ?? null)
+        ) {
+            $this->weatherSnapshotsFetchedAt = $cached['fetched_at'] ?? null;
+            $this->districtSnapshots = $cached['snapshots'];
+
+            return $this->districtSnapshots;
+        }
+
+        $snapshots = $this->requestDistrictWeather($districts);
+        foreach ($fallbackAreas as $area) {
+            $weather = $this->fetchCurrentWeather($area);
+            if ($weather !== null) {
+                $snapshots['area:' . (int) $area->id] = $weather;
+            }
+        }
+
+        $fetchedAt = now()->toIso8601String();
+        Cache::put(self::DISTRICT_WEATHER_CACHE_KEY, [
+            'version' => $version,
+            'fetched_at' => $fetchedAt,
+            'snapshots' => $snapshots,
+        ], self::DISTRICT_WEATHER_TTL_SECONDS);
+        $this->weatherSnapshotsFetchedAt = $fetchedAt;
+        $this->districtSnapshots = $snapshots;
+
+        return $snapshots;
+    }
+
+    /**
+     * @param  array<string, array{latitude: mixed, longitude: mixed}>  $districts
+     * @return array<string, array>
+     */
+    private function requestDistrictWeather(array $districts): array
+    {
+        $snapshots = [];
+        foreach (array_chunk($districts, 50, true) as $chunk) {
+            try {
+                $response = Http::timeout(15)->retry(1, 250)->get('https://api.open-meteo.com/v1/forecast', [
+                    'latitude' => implode(',', array_map(static fn (array $district): string => (string) $district['latitude'], $chunk)),
+                    'longitude' => implode(',', array_map(static fn (array $district): string => (string) $district['longitude'], $chunk)),
+                    'current' => 'precipitation,rain,showers,weather_code',
+                    'hourly' => 'precipitation,weather_code',
+                    'past_days' => 1,
+                    'forecast_days' => 2,
+                    'timezone' => 'Asia/Jakarta',
+                ]);
+            } catch (ConnectionException) {
+                continue;
+            }
+            if ($response->failed()) {
+                continue;
+            }
+
+            $payload = $response->json();
+            // Multi-coordinate responses are arrays aligned with the requested order.
+            $entries = is_array($payload) && array_is_list($payload) ? $payload : [$payload];
+            $index = 0;
+            foreach ($chunk as $districtKey => $district) {
+                $weather = $this->weatherFromPayload($entries[$index] ?? null);
+                $index++;
+                if ($weather !== null) {
+                    $snapshots[$districtKey] = $weather;
+                }
+            }
+        }
+
+        return $snapshots;
+    }
+
+    /**
+     * District snapshot for one area, falling back to the area's own coordinate when
+     * its district snapshot is unavailable.
+     */
+    private function areaWeather(object $area): ?array
+    {
+        $snapshots = $this->districtWeatherSnapshots();
+        $districtKey = $this->districtKey($area);
+        if ($districtKey !== null && isset($snapshots[$districtKey])) {
+            return $snapshots[$districtKey];
+        }
+
+        $areaId = (int) ($area->area_id ?? $area->id ?? 0);
+        if ($areaId !== 0 && isset($snapshots['area:' . $areaId])) {
+            return $snapshots['area:' . $areaId];
+        }
+
+        return $this->fetchCurrentWeather($area);
+    }
+
+    private ?string $weatherSnapshotsFetchedAt = null;
+
+    /** @var array<string, array>|null */
+    private ?array $districtSnapshots = null;
+
     public function latestPredictions(): JsonResponse
     {
         $latestIds = DB::table('risk_predictions')
@@ -283,6 +465,10 @@ class AreaDataController extends Controller
                 'areas.centroid_lng',
                 'predictions.score',
                 'predictions.risk_level',
+                'predictions.rainfall_score',
+                'predictions.history_score',
+                'predictions.environment_score',
+                'predictions.drainage_score',
                 'predictions.status',
                 'predictions.data_as_of',
                 'predictions.calculated_at',
@@ -291,8 +477,10 @@ class AreaDataController extends Controller
                 'rainfall.observed_at as weather_observed_at',
                 'rainfall.raw_metadata as weather_metadata',
             ])
-            ->orderByDesc('predictions.score')
-            ->get()
+            ->orderByDesc('predictions.calculated_at')
+            ->get();
+
+        $payloads = $predictions
             ->map(function (object $prediction): array {
                 $payload = (array) $prediction;
                 $metadata = $payload['weather_metadata'] === null
@@ -313,11 +501,23 @@ class AreaDataController extends Controller
                 );
                 unset($payload['rainfall_mm'], $payload['weather_observed_at'], $payload['weather_metadata']);
 
-                return $payload;
+                // Same blend as /v1/areas/{slug}/risk so both endpoints agree.
+                return $this->applyRealtimeScore(
+                    $payload,
+                    $prediction,
+                    $this->areaWeather($prediction),
+                );
             })
+            ->sortByDesc(static fn (array $payload): int => $payload['score'] ?? -1)
             ->values();
 
-        return response()->json(['data' => $predictions]);
+        return response()->json([
+            'data' => $payloads,
+            'meta' => [
+                'weather_snapshot_at' => $this->weatherSnapshotsFetchedAt,
+                'weather_scope' => 'district',
+            ],
+        ]);
     }
 
     public function floodEvents(Request $request): JsonResponse
@@ -693,9 +893,19 @@ class AreaDataController extends Controller
 
     private function realtimePredictionPayload(object $prediction, ?array $currentWeather): array
     {
-        $payload = $this->predictionPayload($prediction);
+        return $this->applyRealtimeScore($this->predictionPayload($prediction), $prediction, $currentWeather);
+    }
+
+    /**
+     * Blend the stored prediction with the shared district weather snapshot.
+     * Single authoritative scoring path: both /v1/areas/{slug}/risk and
+     * /v1/predictions/latest go through here, so their numbers always match.
+     */
+    private function applyRealtimeScore(array $payload, object $prediction, ?array $currentWeather): array
+    {
         if ($currentWeather === null) {
             $payload['realtime_calculated_at'] = null;
+
             return $payload;
         }
 
@@ -709,13 +919,7 @@ class AreaDataController extends Controller
                 ? null
                 : 100 - (float) $prediction->drainage_score,
         ];
-        $weights = [
-            'rainfall' => 0.30,
-            'current_weather' => 0.30,
-            'history' => 0.25,
-            'environment' => 0.05,
-            'drainage' => 0.10,
-        ];
+        $weights = self::COMPONENT_WEIGHTS;
         $available = array_filter($components, static fn ($value): bool => $value !== null);
         $score = $available !== []
             ? (int) round(array_sum(array_map(
@@ -745,6 +949,7 @@ class AreaDataController extends Controller
             'url' => 'https://open-meteo.com/',
             'status' => 'available',
             'method' => 'near_realtime_model',
+            'scope' => 'district',
             'fetched_at' => $currentWeather['fetched_at'] ?? null,
             'score' => $currentWeatherScore,
             'rain_duration_hours' => $currentWeather['rain_window']['duration_hours'] ?? 0,

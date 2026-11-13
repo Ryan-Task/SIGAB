@@ -1,6 +1,7 @@
 import { Suspense } from "react";
+import { connection } from "next/server";
 import SiteFooter from "../../components/SiteFooter";
-import { getAreaCurrentWeather, getAreaRainfall, getAreaRisk } from "../../../lib/api";
+import { getAreaCurrentWeather, getAreaRainfall, getCachedAreaRisk } from "../../../lib/api";
 import WilayahRoute from "./WilayahRoute";
 import type { WilayahInitialData } from "./WilayahView";
 
@@ -12,7 +13,7 @@ export function generateStaticParams() {
 // instead of rendering empty cards until hydration finishes.
 async function loadInitialData(slug: string): Promise<WilayahInitialData> {
   const [risk, rainfall, weather] = await Promise.allSettled([
-    getAreaRisk(slug),
+    getCachedAreaRisk(slug),
     getAreaRainfall(slug),
     getAreaCurrentWeather(slug),
   ]);
@@ -25,6 +26,9 @@ async function loadInitialData(slug: string): Promise<WilayahInitialData> {
 }
 
 async function WilayahData({ params }: { params: Promise<{ slug: string }> }) {
+  // The risk cache is keyed by wall-clock expiry, so Date.now() is an unstable
+  // value during prerender. Opt this fetch into request-time rendering instead.
+  await connection();
   const { slug } = await params;
   const initial = await loadInitialData(slug);
   return <WilayahRoute params={Promise.resolve({ slug })} initial={initial} />;

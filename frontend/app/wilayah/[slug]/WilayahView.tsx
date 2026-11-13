@@ -3,7 +3,7 @@
 import { motion } from "framer-motion";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
-import { discoverEnvironmentData, getAreaCurrentWeather, getAreaRainfall, getAreaRisk, type ApiArea, type ApiCurrentWeather, type ApiEnvironmentDiscovery, type ApiRainfallRecord, type ApiRiskExplanation, type ApiRiskPrediction } from "../../../lib/api";
+import { discoverEnvironmentData, getAreaCurrentWeather, getAreaRainfall, getCachedAreaRisk, type ApiArea, type ApiCurrentWeather, type ApiEnvironmentDiscovery, type ApiRainfallRecord, type ApiRiskExplanation, type ApiRiskPrediction } from "../../../lib/api";
 
 export type WilayahInitialData = {
   risk: { area: ApiArea; prediction: ApiRiskPrediction | null } | null;
@@ -68,7 +68,7 @@ export default function WilayahView({ wilayah, initial }: Props) {
     // Each payload renders as soon as it arrives: the risk score must not wait
     // for the weather provider, and a failing optional feed must not blank the page.
     const load = () => {
-      getAreaRisk(wilayah)
+      getCachedAreaRisk(wilayah)
         .then((risk) => {
           setError(null);
           setArea(risk.area);

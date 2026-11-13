@@ -184,8 +184,22 @@ function apiUrl(path: string): string {
   return `${apiBaseUrl}${path}`;
 }
 
-async function getJson<T>(path: string): Promise<T> {
-  const response = await fetch(apiUrl(path), { cache: "no-store" });
+const FETCH_TIMEOUT_MS = 10_000;
+// /v1/areas/{slug}/risk recomputes the score from an upstream weather provider.
+// The Laravel dev server handles one request at a time, so a batch of risk
+// calls queues up and easily outlives the default timeout. Give it more room.
+const RISK_FETCH_TIMEOUT_MS = 30_000;
+
+function fetchWithTimeout(url: string, init: RequestInit, timeoutMs = FETCH_TIMEOUT_MS): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  return fetch(url, { ...init, signal: controller.signal }).finally(() => {
+    clearTimeout(timeoutId);
+  });
+}
+
+async function getJson<T>(path: string, timeoutMs?: number): Promise<T> {
+  const response = await fetchWithTimeout(apiUrl(path), { cache: "no-store" }, timeoutMs);
   if (!response.ok) {
     let message = `API request failed: ${response.status}`;
     try {
@@ -212,8 +226,56 @@ export async function getLatestPredictions(): Promise<ApiPrediction[]> {
 export async function getAreaRisk(slug: string): Promise<{ area: ApiArea; prediction: ApiRiskPrediction | null }> {
   const response = await getJson<{ data: { area: ApiArea; prediction: ApiRiskPrediction | null } }>(
     `/v1/areas/${encodeURIComponent(slug)}/risk`,
+    RISK_FETCH_TIMEOUT_MS,
   );
   return response.data;
+}
+
+type AreaRiskResult = { area: ApiArea; prediction: ApiRiskPrediction | null };
+
+// In-memory cache for getAreaRisk so the wilayah detail page does not refetch
+// the same slug while navigating. The backend serves every score from one
+// shared district weather snapshot, so no cross-page override is needed.
+const riskCache = new Map<string, { data: AreaRiskResult; expiresAt: number }>();
+const riskInFlight = new Map<string, Promise<AreaRiskResult>>();
+const RISK_CACHE_TTL_MS = 300_000;
+
+export function getCachedAreaRisk(slug: string): Promise<AreaRiskResult> {
+  const cached = riskCache.get(slug);
+  if (cached && cached.expiresAt > Date.now()) {
+    return Promise.resolve(cached.data);
+  }
+  // Share one request per slug: concurrent callers (map zones, alert list,
+  // detail panel) must not each pay the per-area upstream latency.
+  const inFlight = riskInFlight.get(slug);
+  if (inFlight !== undefined) {
+    return inFlight;
+  }
+  const request = getAreaRisk(slug)
+    .then((data) => {
+      riskCache.set(slug, { data, expiresAt: Date.now() + RISK_CACHE_TTL_MS });
+      return data;
+    })
+    .catch((error: unknown) => {
+      // A refresh that fails should not blank out a stale score we already hold.
+      if (cached !== undefined) return cached.data;
+      throw error;
+    })
+    .finally(() => {
+      riskInFlight.delete(slug);
+    });
+  riskInFlight.set(slug, request);
+  return request;
+}
+
+export function invalidateRiskCache(slug?: string): void {
+  if (slug === undefined) {
+    riskCache.clear();
+    riskInFlight.clear();
+    return;
+  }
+  riskCache.delete(slug);
+  riskInFlight.delete(slug);
 }
 
 export type ApiEnvironmentDataset = {
