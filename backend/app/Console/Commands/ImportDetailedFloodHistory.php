@@ -10,13 +10,13 @@ use SplFileObject;
 
 class ImportDetailedFloodHistory extends Command
 {
-    protected $signature = 'history:import-detailed {path : Path to the detailed flood history CSV}';
+    protected $signature = 'history:import-detailed {path? : Path to the detailed flood history CSV}';
 
     protected $description = 'Import verifiable flood locations mapped to existing village areas';
 
     public function handle(): int
     {
-        $path = $this->argument('path');
+        $path = $this->argument('path') ?: storage_path('app/private/bpbd-banjir-histori.csv');
         if (! is_string($path) || ! is_file($path) || ! is_readable($path)) {
             $this->error("CSV tidak dapat dibaca: {$path}");
 
@@ -72,6 +72,10 @@ class ImportDetailedFloodHistory extends Command
         $imported = 0;
         $unmapped = 0;
         DB::transaction(function () use ($file, $columns, $sourceId, $areaByName, &$imported, &$unmapped): void {
+            DB::table('flood_events')
+                ->where('source_reference', 'like', 'HISTORY:%')
+                ->delete();
+
             foreach ($file as $row) {
                 if (! is_array($row)) {
                     continue;

@@ -188,20 +188,26 @@ python -m sigab_data.sync
 
 ## Import Histori Banjir
 
-Dataset histori banjir berada di:
+Dataset histori banjir aktif dibaca otomatis dari file canonical:
 
 ```text
-backend/storage/app/private/bpbd-banjir-2020-2025.csv
+backend/storage/app/private/bpbd-banjir-histori.csv
 ```
 
-Untuk mengimpor data:
+Jika file tersebut ditambahkan atau diganti, endpoint histori dan risiko akan
+mendeteksi perubahan file lalu mengimpor ulang data secara otomatis. File harus
+memiliki kolom `event_id`, `event_date`, `location`, dan `source_url`.
+
+Import manual juga tersedia:
 
 ```powershell
 cd "D:\LombaUnesa2\SIGAB\backend"
-php artisan history:import-detailed "D:\LombaUnesa2\SIGAB\backend\storage\app\private\bpbd-banjir-2020-2025.csv"
+php artisan history:import-detailed
 ```
 
-Hanya baris yang dapat dipetakan secara aman ke wilayah kelurahan/desa yang dimasukkan ke area detail.
+Data histori lama dari file sebelumnya akan diganti saat file canonical berubah.
+Hanya baris yang dapat dipetakan secara aman ke wilayah kelurahan/desa yang
+dimasukkan ke area detail.
 
 ## Endpoint Utama
 
