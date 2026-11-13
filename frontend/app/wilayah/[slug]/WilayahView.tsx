@@ -155,13 +155,13 @@ export default function WilayahView({ wilayah, initial }: Props) {
   const historyFrequency = prediction?.history_frequency;
   const historyLabel = historyCount === null
     ? "Tidak ada / belum ada data"
-    : `${historyCount} kejadian · ${historyFrequency === "sering" ? "Sering" : historyFrequency === "terkadang" ? "Terkadang" : "Jarang"}`;
+    : `${historyCount} kejadian, ${historyFrequency === "sering" ? "Sering" : historyFrequency === "terkadang" ? "Terkadang" : "Jarang"}`;
   const historyWidth = historyFrequency === "sering" ? "100%" : historyFrequency === "terkadang" ? "60%" : historyFrequency === "jarang" ? "20%" : "0%";
   const factors = [
-    { label: "Hujan saat ini", value: `${currentRainLabel} · skor ${currentRainScore}/100`, width: `${currentRainScore}%` },
+    { label: "Hujan saat ini", value: `${currentRainLabel}, skor risiko banjir ${currentRainScore} dari 100`, width: `${currentRainScore}%` },
     { label: "Riwayat banjir", value: historyLabel, width: historyWidth },
     { label: "Faktor lingkungan", value: environmentScore === null ? "Belum tersedia" : `${environmentScore}/100`, width: `${environmentScore ?? 0}%` },
-    { label: "Kondisi drainase", value: drainageScore === null ? "Belum tersedia" : `${drainageScore}/100 · ${drainageLabel}`, width: `${drainageScore ?? 0}%` },
+    { label: "Kondisi drainase", value: drainageScore === null ? "Belum tersedia" : `${drainageScore} dari 100, ${drainageLabel}`, width: `${drainageScore ?? 0}%` },
   ];
   const formatForecastDay = (value: string): string => new Intl.DateTimeFormat("id-ID", {
     weekday: "short",
@@ -180,25 +180,25 @@ export default function WilayahView({ wilayah, initial }: Props) {
     return amount > 0 ? "Perkiraan hujan" : "Tidak ada hujan";
   };
   const forecastAmount = (record: ApiRainfallRecord): string => {
-    if (record.rainfall_mm === null) return "— mm";
+    if (record.rainfall_mm === null) return "Data belum tersedia";
     return `${record.rainfall_mm} mm`;
   };
   const forecastIcon = (record: ApiRainfallRecord) => {
     const condition = forecastCondition(record).toLowerCase();
     if (/hujan|gerimis|shower|rain/.test(condition)) {
-      return <span aria-label="Hujan" className="text-4xl">🌧️</span>;
+      return <span aria-label="Hujan" className="text-sm font-semibold text-slate-500">Hujan</span>;
     }
     if (/kabut|fog/.test(condition)) {
-      return <span aria-label="Berkabut" className="text-4xl">🌫️</span>;
+      return <span aria-label="Berkabut" className="text-sm font-semibold text-slate-500">Berkabut</span>;
     }
     if (/cerah berawan|berawan|cloud/.test(condition)) {
-      return <span aria-label="Berawan" className="text-4xl">🌤️</span>;
+      return <span aria-label="Berawan" className="text-sm font-semibold text-slate-500">Berawan</span>;
     }
-    return <span aria-label="Cerah" className="text-4xl">☀️</span>;
+    return <span aria-label="Cerah" className="text-sm font-semibold text-slate-500">Cerah</span>;
   };
   const selectedForecast = rainfallForecast[forecastIndex] ?? null;
   const formatEnvironmentalScore = (value: number | null | undefined): string => {
-    if (value === null || value === undefined || !Number.isFinite(Number(value))) return "—";
+    if (value === null || value === undefined || !Number.isFinite(Number(value))) return "Belum tersedia";
     return Number(value).toFixed(2).replace(/\.?0+$/, "");
   };
   const runDiscovery = () => {
@@ -219,7 +219,7 @@ export default function WilayahView({ wilayah, initial }: Props) {
     <main className="min-h-screen bg-[#dfeaf0] text-slate-800">
       <section className="bg-[#123d61] px-6 pb-16 pt-32 text-white">
         <div className="mx-auto max-w-[1180px]">
-          <Link href="/peta-risiko" className="text-sm text-sky-100/70 transition hover:text-white">← Kembali ke peta risiko</Link>
+          <Link href="/peta-risiko" className="text-sm text-sky-100/70 transition hover:text-white">Kembali ke peta risiko</Link>
           <p className="mt-10 text-xs font-bold uppercase tracking-[0.22em] text-[#82d4d0]">Detail wilayah</p>
           <div className="mt-4 flex flex-col justify-between gap-6 md:flex-row md:items-end">
             <div><h1 className="text-5xl font-semibold tracking-[-0.08em] sm:text-7xl">{title}</h1><p className="mt-4 max-w-xl text-base leading-8 text-sky-100/75">Gambaran kondisi, faktor risiko, dan sumber data wilayah ini.</p></div>
@@ -234,13 +234,13 @@ export default function WilayahView({ wilayah, initial }: Props) {
           <div className="grid gap-5 md:grid-cols-3">
             <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="rounded-[28px] bg-[#f38a50] p-7 text-[#123d61]">
               <p className="text-xs font-bold uppercase tracking-[0.18em] opacity-70">Skor risiko banjir</p>
-              <p className="mt-6 text-5xl font-semibold tracking-[-0.08em]">{score === null ? "—" : score}</p>
-              <p className="mt-2 text-sm opacity-70">dari 100</p>
+              <p className="mt-6 text-5xl font-semibold tracking-[-0.08em]">{score === null ? "Belum tersedia" : score}</p>
+              <p className="mt-2 text-sm opacity-70">Skor risiko banjir dari 100</p>
             </motion.div>
             <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="rounded-[28px] bg-white p-7">
               <div className="flex items-center justify-between gap-3">
                 <p className="text-xs font-bold uppercase tracking-[0.18em] opacity-70">Prakiraan hujan BMKG</p>
-                <span className="text-xs text-slate-400">{rainfallForecast.length > 0 ? `${forecastIndex + 1}/${rainfallForecast.length}` : "—"}</span>
+                <span className="text-xs text-slate-400">{rainfallForecast.length > 0 ? `${forecastIndex + 1}/${rainfallForecast.length}` : "Belum tersedia"}</span>
               </div>
               {selectedForecast ? (
                 <div
@@ -264,7 +264,7 @@ export default function WilayahView({ wilayah, initial }: Props) {
                       onClick={() => setForecastIndex((index) => Math.max(0, index - 1))}
                       className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-[#26669a]/30 bg-[#26669a]/10 text-2xl font-semibold text-[#26669a] transition hover:bg-[#26669a] hover:text-white disabled:cursor-not-allowed disabled:opacity-25"
                     >
-                      ←
+                      Sebelumnya
                     </button>
                     <div>
                       <p className="text-sm font-bold text-[#26669a]">{formatForecastDay(selectedForecast.observed_at)}</p>
@@ -278,12 +278,12 @@ export default function WilayahView({ wilayah, initial }: Props) {
                       onClick={() => setForecastIndex((index) => Math.min(rainfallForecast.length - 1, index + 1))}
                       className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-[#26669a]/30 bg-[#26669a]/10 text-2xl font-semibold text-[#26669a] transition hover:bg-[#26669a] hover:text-white disabled:cursor-not-allowed disabled:opacity-25"
                     >
-                      →
+                      Berikutnya
                     </button>
                   </div>
                   <div className="mt-3">{forecastIcon(selectedForecast)}</div>
                   <p className="mt-2 text-sm font-medium text-slate-700">{forecastCondition(selectedForecast)}</p>
-                  <p className="mt-1 text-sm text-slate-500">{forecastAmount(selectedForecast)} · {selectedForecast.rainfall_probability == null ? "Peluang —" : `Peluang ${selectedForecast.rainfall_probability}%`}</p>
+                  <p className="mt-1 text-sm text-slate-500">{forecastAmount(selectedForecast)}, {selectedForecast.rainfall_probability == null ? "peluang belum tersedia" : `peluang ${selectedForecast.rainfall_probability}%`}</p>
                   <p className="mt-3 text-xs text-slate-400">Geser untuk melihat waktu berikutnya</p>
                 </div>
               ) : <p className="mt-6 text-3xl font-semibold tracking-[-0.06em] text-[#123d61]">Belum tersedia</p>}
@@ -291,7 +291,7 @@ export default function WilayahView({ wilayah, initial }: Props) {
             <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="rounded-[28px] bg-white p-7">
               <p className="text-xs font-bold uppercase tracking-[0.18em] opacity-70">Kondisi saat ini</p>
               <p className="mt-6 text-5xl font-semibold tracking-[-0.08em]">{currentRainLabel}</p>
-              <p className="mt-2 text-sm opacity-70">{currentRainDurationLabel} · diperbarui {currentWeather && now != null ? formatRelativeTime(currentWeather.fetched_at, now) : "—"}</p>
+              <p className="mt-2 text-sm opacity-70">{currentRainDurationLabel}, diperbarui {currentWeather && now != null ? formatRelativeTime(currentWeather.fetched_at, now) : "belum tersedia"}</p>
             </motion.div>
           </div>
 
@@ -306,12 +306,12 @@ export default function WilayahView({ wilayah, initial }: Props) {
               </p>
               <div className="mt-8 space-y-6">{factors.map((factor) => <div key={factor.label}><div className="flex justify-between text-sm"><span>{factor.label}</span><span className="text-right text-[#82d4d0]">{factor.value}</span></div><div className="mt-2 h-2 rounded-full bg-white/15"><motion.div initial={{ width: 0 }} animate={{ width: factor.width }} transition={{ duration: 0.8 }} className="h-2 rounded-full bg-[#f38a50]" /></div></div>)}</div>
               <div className="mt-6 space-y-2 rounded-2xl bg-white/10 p-4 text-xs leading-5 text-sky-100/80">
-                <p><strong>Kondisi saat ini ({currentWeather?.provider ?? "Open-Meteo"}):</strong> {currentRainLabel.toLowerCase()}. Skor hujan saat ini: {currentRainScore}/100. Jika tidak sedang hujan, skor otomatis 0; jika hujan, skor mengikuti intensitas dan durasinya. Durasi: {currentRainDurationLabel}. Nilai ini sekarang ikut langsung dalam skor risiko real-time.</p>
+                <p><strong>Kondisi saat ini ({currentWeather?.provider ?? "Open-Meteo"}):</strong> {currentRainLabel.toLowerCase()}. Skor risiko banjir dari hujan saat ini: {currentRainScore} dari 100. Jika tidak sedang hujan, skor otomatis 0; jika hujan, skor mengikuti intensitas dan durasinya. Durasi: {currentRainDurationLabel}. Nilai ini sekarang ikut langsung dalam skor risiko real-time.</p>
                 <p><strong>BMKG:</strong> ini adalah prakiraan untuk slot waktu BMKG terdekat. Interval 3 jam berarti satu data BMKG mewakili perkiraan pada rentang waktu 3 jam, bukan hujan berlangsung terus selama 3 jam. Kondisinya {bmkgConditionLabel.toLowerCase()} dengan {probabilityLabel.toLowerCase()} dan perkiraan sekitar {rainfall ?? "—"} mm. Komponen hujan yang saat ini masuk ke skor risiko berasal dari prakiraan BMKG ini.</p>
                 <p>Dalam 12 bulan terakhir tercatat {historyLabel.toLowerCase()}. Lebih dari 5 kejadian dikategorikan sering, 2–5 terkadang, dan 1 jarang. Jika tidak ada data, histori tidak dimasukkan ke perhitungan.</p>
                 <p>Faktor lingkungan: elevasi {formatEnvironmentalScore(environmentComponents?.elevation_score)} dan kedekatan sungai {formatEnvironmentalScore(environmentComponents?.river_proximity_score)}. Nilainya dibatasi agar proxy geografis tidak mendominasi skor; ini indikator pendukung, bukan kepastian banjir atau tanda sedang hujan.</p>
                 {drainageScore !== null
-                  ? <p>Skor kualitas drainase {drainageScore}/100: {drainageLabel}. Semakin tinggi skor, semakin baik ketersediaan atau kondisi drainase. Nilai ini membantu menurunkan skor risiko.{drainageSource?.method === "nearest_mapped_drainage_quality_proxy" && " Data ini adalah proxy kedekatan jaringan OSM, bukan pemeriksaan fisik."}</p>
+                  ? <p>Skor kualitas drainase {drainageScore} dari 100: {drainageLabel}. Semakin tinggi skor, semakin baik ketersediaan atau kondisi drainase. Nilai ini membantu menurunkan skor risiko.{drainageSource?.method === "nearest_mapped_drainage_quality_proxy" && " Data ini adalah proxy kedekatan jaringan OSM, bukan pemeriksaan fisik."}</p>
                   : drainageIsUnmapped && <p>Drainase tidak terpetakan dekat. Nilai 0 tidak dimasukkan ke perhitungan skor risiko karena bukan bukti drainase rusak.</p>}
                 {drainageSource?.drainage_components && <p>Rincian kualitas: kondisi fisik {drainageSource.drainage_components.physical_condition_score}, kapasitas {drainageSource.drainage_components.capacity_score}, cakupan {drainageSource.drainage_components.coverage_score}, pemeliharaan {drainageSource.drainage_components.maintenance_score}, dan sumbatan {drainageSource.drainage_components.obstruction_score}.</p>}
                 {environmentSource?.river_distance_m != null && <p>Jarak centroid wilayah ke sungai terdekat: {environmentSource.river_distance_m} m. Nilai ini adalah proxy, bukan kepastian banjir.</p>}
@@ -324,7 +324,7 @@ export default function WilayahView({ wilayah, initial }: Props) {
           <div className="mt-8 rounded-[30px] bg-white p-8">
             <div className="flex flex-col justify-between gap-3 md:flex-row md:items-end"><div><p className="text-xs font-bold uppercase tracking-[0.18em] text-[#26669a]">Transparansi perhitungan</p><h2 className="mt-3 text-3xl font-semibold tracking-[-0.06em] text-[#123d61]">Sumber informasi wilayah</h2></div><span className="w-fit rounded-full bg-[#f0e7e2] px-3 py-1 text-xs font-bold text-[#123d61]">{explanation?.completeness === "complete" ? "Data lengkap" : explanation?.completeness === "partial" ? "Data sebagian" : "Data terbatas"}</span></div>
             <p className="mt-4 text-sm leading-7 text-slate-600">{explanation?.caveat ?? "Belum ada penjelasan sumber untuk prediksi ini."}</p>
-            <p className="mt-2 text-xs text-slate-500">Confidence: {explanation?.confidence ?? "limited"}{explanation?.confidence_reasons?.length ? ` — ${explanation.confidence_reasons.join(", ")}` : ""}</p>
+            <p className="mt-2 text-xs text-slate-500">Tingkat keyakinan data: {explanation?.confidence ?? "terbatas"}{explanation?.confidence_reasons?.length ? `, ${explanation.confidence_reasons.join(", ")}` : ""}</p>
             <div className="mt-6 grid gap-3 md:grid-cols-4">{[["rainfall", "Cuaca dan curah hujan"], ["history", "Riwayat banjir"], ["environment", "Faktor lingkungan"], ["drainage", "Kondisi drainase"]].map(([key, label]) => { const detail = explanation?.sources?.[key]; return <div key={key} className="rounded-2xl bg-[#dfeaf0] p-4"><p className="text-sm font-semibold text-[#123d61]">{label}</p><p className="mt-2 text-xs text-slate-600">{sourceStatus(explanation, key)}{detail?.provider ? ` dari ${detail.provider}` : ""}</p>{detail?.elevation_m != null && <p className="mt-1 text-xs text-slate-500">Elevasi: {detail.elevation_m} m</p>}{detail?.river_distance_m != null && <p className="mt-1 text-xs text-slate-500">Jarak sungai: {detail.river_distance_m} m</p>}{detail?.fetched_at && <p className="mt-1 text-xs text-slate-500">Diambil: {new Date(detail.fetched_at).toLocaleString("id-ID")}</p>}</div>; })}</div>
           </div>
 
@@ -362,7 +362,7 @@ export default function WilayahView({ wilayah, initial }: Props) {
           <div className="mt-8 rounded-[30px] bg-[#f0e7e2] p-8"><p className="text-xs font-bold uppercase tracking-[0.18em] text-[#f38a50]">Saran singkat</p><h2 className="mt-4 text-3xl font-semibold tracking-[-0.06em] text-[#123d61]">Siapkan lebih awal.</h2><p className="mt-4 text-sm leading-7 text-slate-600">Letakkan barang penting di tempat tinggi, pantau informasi resmi, dan kenali jalur menuju tempat aman.</p><Link href="/mitigasi" className="mt-8 inline-flex rounded-full bg-[#123d61] px-5 py-3 text-sm font-bold text-white">Baca panduan mitigasi</Link></div>
         </div>
       </section>
-      <section className="bg-[#f0e7e2] px-6 py-16"><div className="mx-auto flex max-w-[1180px] items-center justify-between gap-6"><div><p className="text-xs font-bold uppercase tracking-[0.2em] text-[#26669a]">Lanjutkan eksplorasi</p><h2 className="mt-3 text-3xl font-semibold tracking-[-0.06em] text-[#123d61]">Lihat riwayat wilayah ini.</h2></div><Link href="/data-historis" className="rounded-full bg-[#26669a] px-5 py-3 text-sm font-bold text-white">Data Historis ↗</Link></div></section>
+      <section className="bg-[#f0e7e2] px-6 py-16"><div className="mx-auto flex max-w-[1180px] items-center justify-between gap-6"><div><p className="text-xs font-bold uppercase tracking-[0.2em] text-[#26669a]">Lanjutkan eksplorasi</p><h2 className="mt-3 text-3xl font-semibold tracking-[-0.06em] text-[#123d61]">Lihat riwayat wilayah ini.</h2></div><Link href="/data-historis" className="rounded-full bg-[#26669a] px-5 py-3 text-sm font-bold text-white">Data Historis</Link></div></section>
     </main>
   );
 }

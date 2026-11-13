@@ -125,7 +125,7 @@ function buildDetail(p: ApiPrediction): string {
   }
 
   function avgText(r: { avgRain: number }): string {
-    return r.avgRain > 0 ? ` · rata-rata hujan ${r.avgRain.toFixed(1)} mm` : "";
+    return r.avgRain > 0 ? `, rata-rata hujan ${r.avgRain.toFixed(1)} mm` : "";
   }
 
   export default function PeringatanPage() {
@@ -405,11 +405,11 @@ function buildDetail(p: ApiPrediction): string {
                     <h3 className="mt-2 text-2xl font-semibold tracking-[-0.04em]">{r.label}</h3>
                   </div>
                   <span className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-bold ${r.raining ? "bg-[#f38a50] text-[#123d61]" : "bg-[#82d4d0] text-[#123d61]"}`}>
-                    {r.raining ? "🌧 Hujan" : "☀️ Cerah"}
+                    {r.raining ? "Hujan" : "Cerah"}
                   </span>
                 </div>
                 <p className={`mt-4 text-sm leading-6 ${activeRegion ? "text-sky-100/75" : "text-slate-500"}`}>
-                  {r.areaCount} desa/kelurahan dipantau · {r.rainingCount} wilayah hujan{avgText(r)}
+                  {r.areaCount} desa/kelurahan dipantau, {r.rainingCount} wilayah hujan{avgText(r)}
                 </p>
                 <p className={`mt-2 text-sm font-semibold ${activeRegion ? "text-sky-100/90" : "text-[#26669a]"}`}>
                   {r.dominant}
@@ -441,7 +441,7 @@ function buildDetail(p: ApiPrediction): string {
                     <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${d.raining ? "bg-[#f38a50]" : "bg-[#82d4d0]"}`} />
                   </div>
                   <p className={`mt-1 text-xs ${districtCodeFilter === d.code ? "text-sky-100/75" : "text-slate-500"}`}>
-                    {d.areaCount} wilayah · {d.raining ? `${d.rainingCount} sedang hujan` : "tidak hujan"}
+                    {d.areaCount} wilayah, {d.raining ? `${d.rainingCount} sedang hujan` : "tidak hujan"}
                   </p>
                 </button>
               ))}
@@ -464,7 +464,7 @@ function buildDetail(p: ApiPrediction): string {
             <p className="mt-5 max-w-md text-base leading-8 text-[#123d61]/75">{selected.detail}</p>
             <div className="mt-12 flex items-end justify-between gap-4">
               <div><p className="text-sm font-semibold">{selected.area}</p><p className="mt-1 text-xs text-[#123d61]/60">{selected.time}</p></div>
-                          <span className="rounded-full bg-[#123d61] px-4 py-2 text-xs font-bold text-white">{selected.level} · {selected.score ?? "—"} pts</span>
+                          <span className="rounded-full bg-[#123d61] px-4 py-2 text-xs font-bold text-white">{selected.level}, skor risiko banjir {selected.score ?? "belum tersedia"} dari 100</span>
             </div>
           </motion.div>
 
@@ -483,8 +483,7 @@ function buildDetail(p: ApiPrediction): string {
                             className={`group flex w-full items-center gap-4 rounded-2xl p-4 text-left transition ${index === active ? "bg-white shadow-[0_12px_30px_rgba(38,102,154,0.12)]" : "hover:bg-white/60"}`}
                           >
                 <span className={`h-3 w-3 shrink-0 rounded-full ${alert.level === "Tinggi" ? "bg-[#f38a50]" : alert.level === "Sedang" ? "bg-[#82d4d0]" : "bg-[#26669a]"}`} />
-                <span className="min-w-0 flex-1"><span className="block font-semibold text-[#123d61]">{alert.title}</span><span className="mt-1 block truncate text-sm text-slate-500">{alert.area} · {alert.level} · {alert.score ?? "—"} pts</span></span>
-                <span className="text-slate-400 transition group-hover:translate-x-1">→</span>
+                <span className="min-w-0 flex-1"><span className="block font-semibold text-[#123d61]">{alert.title}</span><span className="mt-1 block truncate text-sm text-slate-500">{alert.area}, {alert.level}, skor risiko banjir {alert.score ?? "belum tersedia"} dari 100</span></span>
               </button>
             ))}
             <div className="mt-6 rounded-2xl border border-[#26669a]/15 bg-[#f0e7e2] p-5 text-sm leading-7 text-slate-600"><strong className="text-[#123d61]">Sumber informasi</strong><br />Status ditampilkan sebagai informasi pendukung. Selalu ikuti arahan resmi BPBD dan BMKG.</div>

@@ -535,7 +535,6 @@ class AreaDataController extends Controller
             ->join('areas', 'areas.id', '=', 'events.area_id')
             ->leftJoin('data_sources', 'data_sources.id', '=', 'events.data_source_id')
             ->where('areas.is_active', true)
-            ->whereIn('areas.regency_code', self::FOCUS_REGENCY_CODES)
             ->select([
                 'events.id',
                 'events.started_at',
@@ -568,7 +567,7 @@ class AreaDataController extends Controller
             $query->where('events.started_at', '<=', $request->date('to')->endOfDay());
         }
 
-        $events = $query->limit(500)->get();
+        $events = $query->get();
         $sourceEvent = $events->first(fn (object $event): bool => $event->source_name !== null);
         $monthly = $events
             ->filter(fn (object $event): bool => $event->started_at !== null)
@@ -603,7 +602,6 @@ class AreaDataController extends Controller
         $years = DB::table('flood_events as events')
             ->join('areas', 'areas.id', '=', 'events.area_id')
             ->where('areas.is_active', true)
-            ->whereIn('areas.regency_code', self::FOCUS_REGENCY_CODES)
             ->whereNotNull('events.started_at')
             ->selectRaw("{$yearExpression} as year")
             ->distinct()
@@ -631,8 +629,7 @@ class AreaDataController extends Controller
         }
 
         $areasQuery = DB::table('areas')
-            ->where('is_active', true)
-            ->whereIn('regency_code', self::FOCUS_REGENCY_CODES);
+            ->where('is_active', true);
         if ($regencyCode !== '') {
             $areasQuery->where('regency_code', $regencyCode);
         }

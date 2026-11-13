@@ -343,8 +343,8 @@ export default function PetaRisikoPage() {
               <p className="mt-1">{selectedArea.weather.description ?? "Prakiraan cuaca tersedia"}</p>
               <p className="mt-1">
                 Prakiraan hujan {selectedArea.weather.rainfall_mm ?? "-"} mm
-                {selectedArea.weather.temperature_c != null && ` · Suhu ${selectedArea.weather.temperature_c} °C`}
-                {selectedArea.weather.humidity_percent != null && ` · Kelembapan ${selectedArea.weather.humidity_percent}%`}
+                {selectedArea.weather.temperature_c != null && `, suhu ${selectedArea.weather.temperature_c} °C`}
+                {selectedArea.weather.humidity_percent != null && `, kelembapan ${selectedArea.weather.humidity_percent}%`}
               </p>
             </div>
             <div className="mt-8 flex items-end gap-3">
@@ -352,7 +352,7 @@ export default function PetaRisikoPage() {
                 {selectedArea.score ?? "—"}
               </span>
               <span className="pb-2 text-sm text-slate-500">
-                skor risiko banjir<br />dari 100
+                Skor risiko banjir<br />dari 100
 
               </span>
             </div>
