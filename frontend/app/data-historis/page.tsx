@@ -78,6 +78,7 @@ export default function DataHistorisPage() {
   const [selectedFloodYear, setSelectedFloodYear] = useState<number | null>(null);
   const [floodHistory, setFloodHistory] = useState<ApiFloodHistory | null>(null);
   const [floodLoading, setFloodLoading] = useState(true);
+  const [hoveredFloodMonth, setHoveredFloodMonth] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -106,6 +107,7 @@ export default function DataHistorisPage() {
       .then(async (years) => {
         if (cancelled) return;
         setFloodYears(years);
+        setHoveredFloodMonth(null);
         const year = selectedFloodYear ?? years[0] ?? null;
         setSelectedFloodYear(year);
         if (year === null) return;
@@ -219,15 +221,46 @@ export default function DataHistorisPage() {
                     <div className="mt-6 flex min-h-56 items-end gap-2 border-b border-slate-200">
                       {Array.from({ length: 12 }, (_, index) => {
                         const month = String(index + 1).padStart(2, "0");
-                        const item = floodHistory.monthly.find((entry) => entry.month === `${selectedFloodYear}-${month}`);
+                        const monthKey = `${selectedFloodYear}-${month}`;
+                        const item = floodHistory.monthly.find((entry) => entry.month === monthKey);
+                        const monthEvents = floodHistory.events.filter((event) => event.started_at?.slice(0, 7) === monthKey);
+                        const areas = [...monthEvents.reduce((counts, event) => {
+                          counts.set(event.area_name, (counts.get(event.area_name) ?? 0) + 1);
+                          return counts;
+                        }, new Map<string, number>())].sort((left, right) => right[1] - left[1]);
                         const count = item?.count ?? 0;
                         const maxCount = Math.max(...floodHistory.monthly.map((entry) => entry.count), 1);
                         return (
-                          <div key={month} className="group relative flex flex-1 items-end">
+                          <div
+                            key={month}
+                            className="group relative flex flex-1 items-end"
+                            onMouseEnter={() => setHoveredFloodMonth(monthKey)}
+                            onMouseLeave={() => setHoveredFloodMonth(null)}
+                            onFocus={() => setHoveredFloodMonth(monthKey)}
+                            onBlur={() => setHoveredFloodMonth(null)}
+                            tabIndex={0}
+                            aria-label={`${month}/${selectedFloodYear}: ${count} kejadian`}
+                          >
+                            {hoveredFloodMonth === monthKey && (
+                              <div className="absolute bottom-full left-1/2 z-20 mb-3 w-56 -translate-x-1/2 rounded-xl bg-[#123d61] p-3 text-xs text-white shadow-xl">
+                                <p className="font-semibold">{month}/{selectedFloodYear}: {count} kejadian</p>
+                                {areas.length > 0 ? (
+                                  <ul className="mt-2 space-y-1 text-sky-100/80">
+                                    {areas.map(([areaName, areaCount]) => (
+                                      <li key={areaName} className="flex justify-between gap-3">
+                                        <span className="truncate">{areaName}</span>
+                                        <span className="shrink-0 font-semibold text-[#82d4d0]">{areaCount}x</span>
+                                      </li>
+                                    ))}
+                                  </ul>
+                                ) : (
+                                  <p className="mt-2 text-sky-100/70">Tidak ada wilayah terdampak.</p>
+                                )}
+                              </div>
+                            )}
                             <div
                               className="w-full rounded-t bg-[#f38a50] transition-colors group-hover:bg-[#123d61]"
                               style={{ height: `${Math.max((count / maxCount) * 190, count > 0 ? 8 : 2)}px` }}
-                              title={`${month}/${selectedFloodYear}: ${count} kejadian`}
                             />
                             <span className="absolute top-full mt-2 left-1/2 -translate-x-1/2 text-[10px] text-slate-400">{month}</span>
                             {count > 0 && <span className="absolute -top-5 left-1/2 -translate-x-1/2 text-[10px] text-slate-500">{count}</span>}
