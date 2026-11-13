@@ -2,13 +2,12 @@
 
 import { motion } from "framer-motion";
 import Link from "next/link";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import SiteFooter from "../components/SiteFooter";
 import SiteNav from "../components/SiteNav";
-import { getAreas, getAreaRisk, getLatestPredictions, type ApiArea, type ApiPrediction, type ApiRiskPrediction } from "../../lib/api";
+import { getAreas, getLatestPredictions, type ApiArea, type ApiPrediction } from "../../lib/api";
 
 const MAX_AREAS = 5;
-const REALTIME_SYNC_COUNT = 15;
 
 function regencyLabel(code: string | null): string {
   if (code === "35.15") return "Kabupaten Sidoarjo";
@@ -126,7 +125,7 @@ function buildDetail(p: ApiPrediction): string {
   }
 
   function avgText(r: { avgRain: number }): string {
-    return r.avgRain > 0 ? ` · rata-rata hujan ${r.avgRain.toFixed(1)} mm` : "";
+    return r.avgRain > 0 ? `, rata-rata hujan ${r.avgRain.toFixed(1)} mm` : "";
   }
 
   export default function PeringatanPage() {
@@ -139,31 +138,6 @@ function buildDetail(p: ApiPrediction): string {
   const [districtCodeFilter, setDistrictCodeFilter] = useState<string | null>(null);
   const [regencyFilter, setRegencyFilter] = useState<string>("all");
 
-  const syncPredictionSlugs = (slugs: string[]) => {
-    if (slugs.length === 0) return;
-    void Promise.allSettled(slugs.map((slug) => getAreaRisk(slug))).then((results) => {
-      const realtimeBySlug = new Map<string, ApiRiskPrediction>();
-      results.forEach((result, index) => {
-        if (result.status === "fulfilled" && result.value.prediction) {
-          realtimeBySlug.set(slugs[index], result.value.prediction);
-        }
-      });
-      if (realtimeBySlug.size === 0) return;
-      setPredictions((current) => current.map((prediction) => {
-        const realtime = realtimeBySlug.get(prediction.slug);
-        if (!realtime) return prediction;
-        return {
-          ...prediction,
-          score: realtime.score,
-          risk_level: realtime.risk_level,
-          current_weather_score: realtime.current_weather_score ?? prediction.current_weather_score,
-          realtime_calculated_at: realtime.realtime_calculated_at ?? prediction.realtime_calculated_at,
-          explanation: realtime.explanation ?? prediction.explanation,
-        };
-      }));
-    });
-  };
-
   useEffect(() => {
       let cancelled = false;
       async function load() {
@@ -174,45 +148,23 @@ function buildDetail(p: ApiPrediction): string {
             getLatestPredictions(),
           ]);
 
+          if (cancelled) return;
           if (areasResp.status === "fulfilled") {
             setAreas(areasResp.value);
           }
           if (predictionsResp.status === "fulfilled") {
-            const stored = predictionsResp.value;
-            // Sinkronkan skor dengan halaman detail wilayah: ambil hitung ulang
-            // real-time untuk kandidat skor tertinggi, lalu timpa skor tersimpan.
-            const candidates = [...stored]
-              .filter((p) => p.score != null && p.score > 0)
-              .sort((left, right) => (right.score ?? 0) - (left.score ?? 0))
-              .slice(0, Math.max(MAX_AREAS, REALTIME_SYNC_COUNT));
-            const realtimeResults = await Promise.allSettled(
-              candidates.map((p) => getAreaRisk(p.slug)),
-            );
-            if (cancelled) return;
-            const realtimeBySlug = new Map<string, ApiRiskPrediction>();
-            realtimeResults.forEach((result, index) => {
-              if (result.status === "fulfilled" && result.value.prediction) {
-                realtimeBySlug.set(candidates[index].slug, result.value.prediction);
-              }
-            });
-            const merged = realtimeBySlug.size > 0
-              ? stored.map((p) => {
-                  const realtime = realtimeBySlug.get(p.slug);
-                  if (!realtime) return p;
-                  return {
-                    ...p,
-                    score: realtime.score,
-                    risk_level: realtime.risk_level,
-                    current_weather_score: realtime.current_weather_score ?? p.current_weather_score,
-                    realtime_calculated_at: realtime.realtime_calculated_at ?? p.realtime_calculated_at,
-                    explanation: realtime.explanation ?? p.explanation,
-                  };
-                })
-              : stored;
-            setPredictions(merged);
+            // /v1/predictions/latest already carries the same realtime blend as the
+            // wilayah detail page, so there is no per-slug override to run here.
+            setPredictions(predictionsResp.value);
+            setLoading(false);
+            return;
+          }
+          if (areasResp.status === "rejected" && predictionsResp.status === "rejected") {
+            const reason = predictionsResp.reason ?? areasResp.reason;
+            throw reason instanceof Error ? reason : new Error("Gagal memuat data peringatan");
           }
         } catch (e: any) {
-          setError(e.message ?? "Gagal memuat data peringatan");
+          if (!cancelled) setError(e?.message ?? "Gagal memuat data peringatan");
         } finally {
           if (!cancelled) setLoading(false);
         }
@@ -222,6 +174,99 @@ function buildDetail(p: ApiPrediction): string {
         cancelled = true;
       };
     }, []);
+
+  // Derived values are memoized so that unrelated state changes (active tab,
+  // filters) do not recompute 500 predictions worth of grouping on every render.
+  const allAlerts = useMemo(() => predictions
+    .filter((p) => p.score != null && p.score > 0)
+    .sort((left, right) => (right.score ?? 0) - (left.score ?? 0))
+    .map((p) => {
+      const area = areas.find((a) => a.slug === p.slug);
+      const locationLabel = regencyLabel(p.regency_code ?? area?.regency_code ?? null)
+        || p.regency_name || area?.regency_name || "Wilayah terintegrasi";
+      const levelMap: Record<string, string> = {
+        high: "Tinggi",
+        medium: "Sedang",
+        low: "Rendah",
+        insufficient: "Tidak Tahu",
+      };
+      const level = levelMap[p.risk_level ?? "insufficient"] ?? "Tidak Tahu";
+      const timeSource = p.realtime_calculated_at ?? p.calculated_at;
+      const timeAgo = timeSource
+        ? new Date(timeSource.replace(" ", "T")).toLocaleString("id-ID", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })
+        : "Baru saja";
+      return {
+        area: locationLabel,
+        title: p.name,
+        level,
+        time: timeAgo,
+        detail: buildDetail(p),
+        score: p.score,
+        slug: p.slug,
+        districtCode: districtCode(p),
+      };
+    }), [predictions, areas]);
+
+  const alerts = useMemo(() => allAlerts.slice(0, MAX_AREAS), [allAlerts]);
+
+  // Stats per wilayah besar (grup kecamatan)
+  const regionStats = useMemo(() => REGIONS.map((r) => {
+    const dset = new Set(r.districts);
+    const members = predictions.filter((p) => {
+      const d = districtCode(p);
+      return d !== null && dset.has(d);
+    });
+    const raining = members.filter(isRaining);
+    const districtsRaining = new Set(raining.map(districtCode).filter(Boolean)).size;
+    const avgRain = members.length > 0
+      ? members.reduce((sum, p) => sum + rainfallMm(p), 0) / members.length
+      : 0;
+    const descriptions = members
+      .map((p) => p.weather?.description)
+      .filter((d): d is string => Boolean(d));
+    const dominant = descriptions.length > 0
+      ? descriptions.sort((a, b) =>
+          descriptions.filter((d) => d === b).length - descriptions.filter((d) => d === a).length
+        )[0]
+      : "Tidak diketahui";
+    return {
+      ...r,
+      areaCount: members.length,
+      rainingCount: raining.length,
+      districtsRaining,
+      avgRain,
+      dominant,
+      raining: raining.length > 0,
+    };
+  }), [predictions]);
+
+  const visibleRegions = useMemo(
+    () => regionStats.filter((r) => regencyFilter === "all" || r.regency === regencyFilter),
+    [regionStats, regencyFilter],
+  );
+  const currentRegion = visibleRegions.find((r) => r.key === regionKey) ?? visibleRegions[0] ?? regionStats[0];
+  const currentDistricts = useMemo(() => currentRegion
+    ? currentRegion.districts.map((code) => {
+        const members = predictions.filter((p) => districtCode(p) === code);
+        const raining = members.filter(isRaining).length;
+        return {
+          code,
+          name: KECAMATAN[code] ?? code,
+          areaCount: members.length,
+          raining: raining > 0,
+          rainingCount: raining,
+        };
+      })
+    : [], [currentRegion, predictions]);
+
+  const districtAlerts = useMemo(
+    () => districtCodeFilter
+      ? allAlerts.filter((alert) => alert.districtCode === districtCodeFilter)
+      : alerts,
+    [allAlerts, alerts, districtCodeFilter],
+  );
+  const visibleAlerts = districtAlerts.length > 0 ? districtAlerts : alerts;
+  const selected = visibleAlerts[Math.min(active, visibleAlerts.length - 1)];
 
   if (loading) {
     return (
@@ -263,109 +308,23 @@ function buildDetail(p: ApiPrediction): string {
     );
   }
 
-  // Build integrated alerts from predictions + environment data
-  const allAlerts = predictions
-    .filter((p) => p.score != null && p.score > 0)
-      .sort((left, right) => (right.score ?? 0) - (left.score ?? 0))
-    .map((p) => {
-      const area = areas.find((a) => a.slug === p.slug);
-            const locationLabel = regencyLabel(p.regency_code ?? area?.regency_code ?? null)
-              || p.regency_name || area?.regency_name || "Wilayah terintegrasi";
-            const levelMap: Record<string, string> = {
-              high: "Tinggi",
-              medium: "Sedang",
-              low: "Rendah",
-              insufficient: "Tidak Tahu",
-            };
-            const level = levelMap[p.risk_level ?? "insufficient"] ?? "Tidak Tahu";
-            const timeSource = p.realtime_calculated_at ?? p.calculated_at;
-                        const timeAgo = timeSource
-                          ? new Date(timeSource.replace(" ", "T")).toLocaleString("id-ID", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })
-                          : "Baru saja";
-            const detail = buildDetail(p);
-            return {
-              area: locationLabel,
-              title: p.name,
-              level,
-              time: timeAgo,
-              detail,
-              score: p.score,
-              slug: p.slug,
-              districtCode: districtCode(p),
-            };
-    });
+  if (alerts.length === 0) {
+    return (
+      <main className="min-h-screen bg-[#dfeaf0] text-slate-800">
+        <SiteNav />
+        <section className="bg-[#123d61] px-6 pb-16 pt-32 text-white">
+          <div className="mx-auto max-w-[1180px]">
+            <p className="text-xs font-bold uppercase tracking-[0.22em] text-[#82d4d0]">Pusat informasi</p>
+            <h1 className="mt-4 text-5xl font-semibold leading-[0.95] tracking-[-0.08em] sm:text-7xl">Waspada,<br />bukan panik.</h1>
+            <p className="mt-6 max-w-xl text-base leading-8 text-sky-100/75">Belum ada data peringatan. Pastikan server Laravel aktif.</p>
+          </div>
+        </section>
+        <SiteFooter />
+      </main>
+    );
+  }
 
-        const alerts = allAlerts.slice(0, MAX_AREAS);
-        if (alerts.length === 0) {
-          return (
-            <main className="min-h-screen bg-[#dfeaf0] text-slate-800">
-              <SiteNav />
-              <section className="bg-[#123d61] px-6 pb-16 pt-32 text-white">
-                <div className="mx-auto max-w-[1180px]">
-                  <p className="text-xs font-bold uppercase tracking-[0.22em] text-[#82d4d0]">Pusat informasi</p>
-                  <h1 className="mt-4 text-5xl font-semibold leading-[0.95] tracking-[-0.08em] sm:text-7xl">Waspada,<br />bukan panik.</h1>
-                  <p className="mt-6 max-w-xl text-base leading-8 text-sky-100/75">Belum ada data peringatan. Pastikan server Laravel aktif.</p>
-                </div>
-              </section>
-              <SiteFooter />
-            </main>
-          );
-        }
-
-                // Stats per wilayah besar (grup kecamatan)
-                const regionStats = REGIONS.map((r) => {
-                  const dset = new Set(r.districts);
-                  const members = predictions.filter((p) => {
-                    const d = districtCode(p);
-                    return d !== null && dset.has(d);
-                  });
-                  const raining = members.filter(isRaining);
-                  const districtsRaining = new Set(raining.map(districtCode).filter(Boolean)).size;
-                  const avgRain = members.length > 0
-                    ? members.reduce((sum, p) => sum + rainfallMm(p), 0) / members.length
-                    : 0;
-                  const descriptions = members
-                    .map((p) => p.weather?.description)
-                    .filter((d): d is string => Boolean(d));
-                  const dominant = descriptions.length > 0
-                    ? descriptions.sort((a, b) =>
-                        descriptions.filter((d) => d === b).length - descriptions.filter((d) => d === a).length
-                      )[0]
-                    : "Tidak diketahui";
-                  return {
-                    ...r,
-                    areaCount: members.length,
-                    rainingCount: raining.length,
-                    districtsRaining,
-                    avgRain,
-                    dominant,
-                    raining: raining.length > 0,
-                  };
-                });
-
-                const visibleRegions = regionStats.filter((r) => regencyFilter === "all" || r.regency === regencyFilter);
-                const currentRegion = visibleRegions.find((r) => r.key === regionKey) ?? visibleRegions[0] ?? regionStats[0];
-                const currentDistricts = currentRegion
-                  ? currentRegion.districts.map((code) => {
-                      const members = predictions.filter((p) => districtCode(p) === code);
-                      const raining = members.filter(isRaining).length;
-                      return {
-                        code,
-                        name: KECAMATAN[code] ?? code,
-                        areaCount: members.length,
-                        raining: raining > 0,
-                        rainingCount: raining,
-                      };
-                    })
-                  : [];
-
-                const districtAlerts = districtCodeFilter
-                  ? allAlerts.filter((alert) => alert.districtCode === districtCodeFilter)
-                  : alerts;
-                const visibleAlerts = districtAlerts.length > 0 ? districtAlerts : alerts;
-                const selected = visibleAlerts[Math.min(active, visibleAlerts.length - 1)];
-
-                return (
+  return (
     <main className="min-h-screen bg-[#dfeaf0] text-slate-800">
       <SiteNav />
       <section className="bg-[#123d61] px-6 pb-16 pt-32 text-white">
@@ -446,11 +405,11 @@ function buildDetail(p: ApiPrediction): string {
                     <h3 className="mt-2 text-2xl font-semibold tracking-[-0.04em]">{r.label}</h3>
                   </div>
                   <span className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-bold ${r.raining ? "bg-[#f38a50] text-[#123d61]" : "bg-[#82d4d0] text-[#123d61]"}`}>
-                    {r.raining ? "🌧 Hujan" : "☀️ Cerah"}
+                    {r.raining ? "Hujan" : "Cerah"}
                   </span>
                 </div>
                 <p className={`mt-4 text-sm leading-6 ${activeRegion ? "text-sky-100/75" : "text-slate-500"}`}>
-                  {r.areaCount} desa/kelurahan dipantau · {r.rainingCount} wilayah hujan{avgText(r)}
+                  {r.areaCount} desa/kelurahan dipantau, {r.rainingCount} wilayah hujan{avgText(r)}
                 </p>
                 <p className={`mt-2 text-sm font-semibold ${activeRegion ? "text-sky-100/90" : "text-[#26669a]"}`}>
                   {r.dominant}
@@ -474,9 +433,6 @@ function buildDetail(p: ApiPrediction): string {
                   onClick={() => {
                     setDistrictCodeFilter(d.code);
                     setActive(0);
-                    syncPredictionSlugs(
-                      predictions.filter((prediction) => districtCode(prediction) === d.code).map((prediction) => prediction.slug),
-                    );
                   }}
                   className={`w-full rounded-2xl border p-4 text-left transition hover:border-[#26669a]/40 ${districtCodeFilter === d.code ? "border-[#123d61] bg-[#123d61] text-white shadow-[0_8px_20px_rgba(18,61,97,0.18)]" : d.raining ? "border-[#f38a50]/50 bg-[#f38a50]/10" : "border-[#26669a]/10 bg-white"}`}
                 >
@@ -485,7 +441,7 @@ function buildDetail(p: ApiPrediction): string {
                     <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${d.raining ? "bg-[#f38a50]" : "bg-[#82d4d0]"}`} />
                   </div>
                   <p className={`mt-1 text-xs ${districtCodeFilter === d.code ? "text-sky-100/75" : "text-slate-500"}`}>
-                    {d.areaCount} wilayah · {d.raining ? `${d.rainingCount} sedang hujan` : "tidak hujan"}
+                    {d.areaCount} wilayah, {d.raining ? `${d.rainingCount} sedang hujan` : "tidak hujan"}
                   </p>
                 </button>
               ))}
@@ -508,7 +464,7 @@ function buildDetail(p: ApiPrediction): string {
             <p className="mt-5 max-w-md text-base leading-8 text-[#123d61]/75">{selected.detail}</p>
             <div className="mt-12 flex items-end justify-between gap-4">
               <div><p className="text-sm font-semibold">{selected.area}</p><p className="mt-1 text-xs text-[#123d61]/60">{selected.time}</p></div>
-                          <span className="rounded-full bg-[#123d61] px-4 py-2 text-xs font-bold text-white">{selected.level} · {selected.score ?? "—"} pts</span>
+                          <span className="rounded-full bg-[#123d61] px-4 py-2 text-xs font-bold text-white">{selected.level}, skor risiko banjir {selected.score ?? "belum tersedia"} dari 100</span>
             </div>
           </motion.div>
 
@@ -523,15 +479,11 @@ function buildDetail(p: ApiPrediction): string {
                           <button
                             key={alert.slug}
                             type="button"
-                            onClick={() => {
-                              setActive(index);
-                              syncPredictionSlugs([alert.slug]);
-                            }}
+                            onClick={() => setActive(index)}
                             className={`group flex w-full items-center gap-4 rounded-2xl p-4 text-left transition ${index === active ? "bg-white shadow-[0_12px_30px_rgba(38,102,154,0.12)]" : "hover:bg-white/60"}`}
                           >
                 <span className={`h-3 w-3 shrink-0 rounded-full ${alert.level === "Tinggi" ? "bg-[#f38a50]" : alert.level === "Sedang" ? "bg-[#82d4d0]" : "bg-[#26669a]"}`} />
-                <span className="min-w-0 flex-1"><span className="block font-semibold text-[#123d61]">{alert.title}</span><span className="mt-1 block truncate text-sm text-slate-500">{alert.area} · {alert.level} · {alert.score ?? "—"} pts</span></span>
-                <span className="text-slate-400 transition group-hover:translate-x-1">→</span>
+                <span className="min-w-0 flex-1"><span className="block font-semibold text-[#123d61]">{alert.title}</span><span className="mt-1 block truncate text-sm text-slate-500">{alert.area}, {alert.level}, skor risiko banjir {alert.score ?? "belum tersedia"} dari 100</span></span>
               </button>
             ))}
             <div className="mt-6 rounded-2xl border border-[#26669a]/15 bg-[#f0e7e2] p-5 text-sm leading-7 text-slate-600"><strong className="text-[#123d61]">Sumber informasi</strong><br />Status ditampilkan sebagai informasi pendukung. Selalu ikuti arahan resmi BPBD dan BMKG.</div>

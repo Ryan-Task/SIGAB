@@ -4,6 +4,31 @@ use App\Http\Controllers\Api\V1\AreaDataController;
 use App\Http\Controllers\Api\V1\PredictionImportController;
 use App\Http\Controllers\Api\V1\EnvironmentDiscoveryController;
 use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\Api\AuthController;
+
+Route::post('/auth/request-code', [AuthController::class, 'requestCode'])->middleware('throttle:5,1');
+Route::post('/auth/verify-code', [AuthController::class, 'verifyCode'])->middleware('throttle:10,1');
+Route::post('/auth/password/forgot-code', [AuthController::class, 'requestPasswordResetCode'])->middleware('throttle:5,1');
+Route::post('/auth/password/reset', [AuthController::class, 'resetPassword'])->middleware('throttle:10,1');
+Route::post('/auth/email-login', [AuthController::class, 'emailLogin'])->middleware('throttle:10,1');
+Route::post('/auth/admin-login', [AuthController::class, 'adminLogin'])->middleware('throttle:10,1');
+Route::get('/auth/google/redirect', [AuthController::class, 'googleRedirect']);
+Route::get('/auth/google/callback', [AuthController::class, 'googleCallback']);
+Route::get('/auth/push/public-key', [AuthController::class, 'pushPublicKey']);
+Route::middleware('auth.token')->group(function (): void {
+    Route::get('/auth/me', [AuthController::class, 'me']);
+    Route::post('/auth/logout', [AuthController::class, 'logout']);
+    Route::put('/auth/settings', [AuthController::class, 'updateSettings']);
+    Route::put('/auth/profile', [AuthController::class, 'updateProfile']);
+    Route::post('/auth/password/change-code', [AuthController::class, 'requestPasswordChangeCode'])->middleware('throttle:5,1');
+    Route::put('/auth/password', [AuthController::class, 'updatePassword'])->middleware('throttle:10,1');
+    Route::get('/auth/locations', [AuthController::class, 'locations']);
+    Route::post('/auth/locations', [AuthController::class, 'addLocation']);
+    Route::delete('/auth/locations/{locationId}', [AuthController::class, 'removeLocation']);
+    Route::post('/auth/push/subscribe', [AuthController::class, 'subscribePush']);
+    Route::delete('/auth/push/subscribe', [AuthController::class, 'unsubscribePush']);
+    Route::get('/admin/dashboard', [AuthController::class, 'adminDashboard']);
+});
 
 Route::get('/v1/areas', [AreaDataController::class, 'index']);
 Route::get('/v1/areas/{slug}/risk', [AreaDataController::class, 'risk']);

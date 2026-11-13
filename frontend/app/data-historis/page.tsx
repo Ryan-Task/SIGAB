@@ -101,18 +101,16 @@ export default function DataHistorisPage() {
   useEffect(() => {
     let cancelled = false;
     setFloodLoading(true);
-    Promise.all([
-      getFloodEventYears(),
-      getFloodHistoryByYear(selectedFloodYear ?? new Date().getFullYear(), selectedRegency || undefined),
-    ])
-      .then(([years, history]) => {
+    setFloodHistory(null);
+    getFloodEventYears()
+      .then(async (years) => {
         if (cancelled) return;
         setFloodYears(years);
         const year = selectedFloodYear ?? years[0] ?? null;
         setSelectedFloodYear(year);
-        if (year !== null && history.year === year) {
-          setFloodHistory(history);
-        }
+        if (year === null) return;
+        const history = await getFloodHistoryByYear(year, selectedRegency || undefined);
+        if (!cancelled) setFloodHistory(history);
       })
       .catch(() => {
         if (!cancelled) setFloodHistory(null);
@@ -141,7 +139,7 @@ export default function DataHistorisPage() {
         <div className="mx-auto max-w-[1180px]">
           <p className="text-xs font-bold uppercase tracking-[0.22em] text-[#26669a]">Membaca pola</p>
           <h1 className="mt-4 max-w-4xl text-5xl font-semibold leading-[0.95] tracking-[-0.08em] text-[#123d61] sm:text-7xl">Belajar dari<br />air yang pernah datang.</h1>
-          <p className="mt-6 max-w-xl text-base leading-8 text-slate-600">Data historis curah hujan dan skor risiko yang benar-benar tercatat di sistem untuk Surabaya dan Sidoarjo — ditampilkan sebagai diagram, bukan angka ilustrasi.</p>
+          <p className="mt-6 max-w-xl text-base leading-8 text-slate-600">Data historis curah hujan dan skor risiko banjir yang benar-benar tercatat di sistem untuk Surabaya dan Sidoarjo. Data ditampilkan sebagai diagram, bukan angka ilustrasi.</p>
         </div>
       </section>
 
@@ -184,7 +182,7 @@ export default function DataHistorisPage() {
                 {[
                   { label: "Total curah hujan", value: `${rainfall.total_mm.toLocaleString("id-ID", { maximumFractionDigits: 1 })} mm`, note: `${rainfall.from ? dayLabel(rainfall.from.slice(0, 10)) : "?"} – ${rainfall.to ? dayLabel(rainfall.to.slice(0, 10)) : "?"}` },
                   { label: "Wilayah terpantau", value: String(summary?.area_count ?? 0), note: `${rainfall.districts.length} kecamatan` },
-                  { label: "Rata-rata skor risiko", value: `${risk.avg_score}`, note: `rentang ${risk.min_score}–${risk.max_score}` },
+                  { label: "Rata-rata skor risiko banjir", value: `${risk.avg_score}`, note: `rentang ${risk.min_score} sampai ${risk.max_score}` },
                   { label: "Prediksi risiko sedang", value: String(risk.levels.find((l) => l.level === "medium")?.count ?? 0), note: `dari ${summary?.area_count ?? 0} wilayah` },
                 ].map((stat) => (
                   <div key={stat.label} className="rounded-[24px] bg-white p-6">
@@ -279,7 +277,7 @@ export default function DataHistorisPage() {
                         <div
                           className="rounded-t bg-[#26669a] transition-colors hover:bg-[#f38a50]"
                           style={{ height: `${Math.max((item.avg_mm / maxHourly) * 200, 2)}px` }}
-                          title={`${String(item.hour).padStart(2, "0")}:00 — ${item.avg_mm} mm`}
+                          title={`${String(item.hour).padStart(2, "0")}:00, ${item.avg_mm} mm`}
                         />
                         {item.hour % 6 === 0 && (
                           <span className="absolute top-full mt-2 left-1/2 -translate-x-1/2 text-[10px] text-slate-400">{String(item.hour).padStart(2, "0")}</span>
@@ -293,7 +291,7 @@ export default function DataHistorisPage() {
               <div className="mt-6 grid gap-6 lg:grid-cols-2">
                 <div className="rounded-[32px] bg-white p-6 sm:p-8">
                   <p className="text-sm font-semibold text-[#123d61]">Sebaran skor risiko wilayah</p>
-                  <p className="mt-1 text-xs text-slate-500">Jumlah wilayah per rentang skor (0–100)</p>
+                  <p className="mt-1 text-xs text-slate-500">Jumlah wilayah per rentang skor risiko banjir (0 sampai 100)</p>
                   <div className="mt-8 flex min-h-52 items-end gap-2 border-b border-slate-200">
                     {risk.score_distribution.map((item) => (
                       <div key={item.bucket} className="group relative flex-1">
@@ -310,7 +308,7 @@ export default function DataHistorisPage() {
                 </div>
 
                 <div className="rounded-[32px] bg-white p-6 sm:p-8">
-                  <p className="text-sm font-semibold text-[#123d61]">Komponen skor rata-rata</p>
+                  <p className="text-sm font-semibold text-[#123d61]">Komponen skor risiko banjir rata-rata</p>
                   <p className="mt-1 text-xs text-slate-500">Kontribusi tiap komponen model risiko</p>
                   <div className="mt-6 space-y-5">
                     {risk.components.map((comp) => (
@@ -380,7 +378,7 @@ export default function DataHistorisPage() {
               )}
 
               <p className="mt-6 text-xs leading-6 text-slate-500">
-                Sumber: {summary?.source.rainfall} — {summary?.source.risk}.
+                Sumber: {summary?.source.rainfall} dan {summary?.source.risk}.
                 {summary?.updated_at ? ` Data diperbarui ${new Date(summary.updated_at).toLocaleString("id-ID")}.` : ""}
                 {risk.calculated_at ? ` Prediksi risiko dihitung ${new Date(risk.calculated_at).toLocaleString("id-ID")}.` : ""}
               </p>

@@ -41,4 +41,15 @@ return [
         'google_search' => filter_var(env('GEMINI_GOOGLE_SEARCH', false), FILTER_VALIDATE_BOOLEAN),
     ],
 
+    'google' => [
+        'client_id' => env('GOOGLE_CLIENT_ID'),
+        'client_secret' => env('GOOGLE_CLIENT_SECRET'),
+        'redirect_uri' => env('GOOGLE_REDIRECT_URI', env('APP_URL') . '/api/auth/google/callback'),
+    ],
+    'vapid' => [
+        'subject' => env('VAPID_SUBJECT'),
+        'public_key' => env('VAPID_PUBLIC_KEY'),
+        'private_key' => env('VAPID_PRIVATE_KEY'),
+    ],
+
 ];

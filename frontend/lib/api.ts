@@ -184,8 +184,29 @@ function apiUrl(path: string): string {
   return `${apiBaseUrl}${path}`;
 }
 
-async function getJson<T>(path: string): Promise<T> {
-  const response = await fetch(apiUrl(path), { cache: "no-store" });
+const FETCH_TIMEOUT_MS = 10_000;
+const AUTH_FETCH_TIMEOUT_MS = 45_000;
+// /v1/areas/{slug}/risk recomputes the score from an upstream weather provider.
+// The Laravel dev server handles one request at a time, so a batch of risk
+// calls queues up and easily outlives the default timeout. Give it more room.
+const RISK_FETCH_TIMEOUT_MS = 30_000;
+
+function fetchWithTimeout(url: string, init: RequestInit, timeoutMs = FETCH_TIMEOUT_MS): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  return fetch(url, { ...init, signal: controller.signal }).finally(() => {
+    clearTimeout(timeoutId);
+  });
+}
+
+async function getJson<T>(
+  path: string,
+  initOrTimeout?: RequestInit | number,
+  timeoutOverrideMs?: number,
+): Promise<T> {
+  const init = typeof initOrTimeout === "number" ? {} : (initOrTimeout ?? {});
+  const timeoutMs = timeoutOverrideMs ?? (typeof initOrTimeout === "number" ? initOrTimeout : undefined);
+  const response = await fetchWithTimeout(apiUrl(path), { cache: "no-store", ...init }, timeoutMs);
   if (!response.ok) {
     let message = `API request failed: ${response.status}`;
     try {
@@ -204,6 +225,225 @@ export async function getAreas(): Promise<ApiArea[]> {
   return Array.isArray(response.data) ? response.data : response.data.data;
 }
 
+export type AuthUser = { id: number; name: string; email: string; two_factor_enabled: boolean; is_admin: boolean; has_locations: boolean };
+export type UserLocation = {
+  id: number;
+  area_id: number;
+  label: string | null;
+  latitude: string | null;
+  longitude: string | null;
+  source: "gps" | "manual";
+  name: string;
+  slug: string;
+  regency_name: string | null;
+  centroid_lat: string | null;
+  centroid_lng: string | null;
+};
+const AUTH_TOKEN_KEY = "sigab_auth_token";
+
+function authHeaders(): HeadersInit {
+  const token = typeof window === "undefined"
+    ? null
+    : localStorage.getItem(AUTH_TOKEN_KEY) ?? sessionStorage.getItem(AUTH_TOKEN_KEY);
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+export function persistAuthToken(token: string, remember = false): void {
+  if (remember) {
+    localStorage.setItem(AUTH_TOKEN_KEY, token);
+    sessionStorage.removeItem(AUTH_TOKEN_KEY);
+  } else {
+    sessionStorage.setItem(AUTH_TOKEN_KEY, token);
+    localStorage.removeItem(AUTH_TOKEN_KEY);
+  }
+}
+
+export async function requestLoginCode(email: string, name?: string): Promise<void> {
+  await getJson<void>("/auth/request-code", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, name }),
+  }, AUTH_FETCH_TIMEOUT_MS);
+}
+
+export async function emailLogin(email: string, remember = false): Promise<AuthUser | null> {
+  const response = await getJson<{ data?: { user: AuthUser; token: string }; requires_verification?: boolean }>("/auth/email-login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email }),
+  });
+  if (response.requires_verification) return null;
+  if (!response.data) throw new Error("Respons login tidak valid.");
+  persistAuthToken(response.data.token, remember);
+  return response.data.user;
+}
+
+export async function adminLogin(email: string, password: string, remember = false): Promise<AuthUser> {
+  const response = await getJson<{ data: { user: AuthUser; token: string } }>("/auth/admin-login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password }),
+  });
+  persistAuthToken(response.data.token, remember);
+  return response.data.user;
+}
+
+export type AdminDashboard = {
+  users: number;
+  areas: number;
+  saved_locations: number;
+  push_subscriptions: number;
+  risk_predictions: number;
+};
+
+export async function getAdminDashboard(): Promise<AdminDashboard> {
+  const response = await getJson<{ data: AdminDashboard }>("/admin/dashboard", { headers: authHeaders() });
+  return response.data;
+}
+
+export async function verifyLoginCode(email: string, code: string, name?: string, remember = false): Promise<AuthUser> {
+  const response = await getJson<{ data: { user: AuthUser; token: string } }>("/auth/verify-code", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, code, name }),
+  });
+  persistAuthToken(response.data.token, remember);
+  return response.data.user;
+}
+
+export async function requestPasswordResetCode(email: string): Promise<void> {
+  await getJson<void>("/auth/password/forgot-code", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email }),
+  }, AUTH_FETCH_TIMEOUT_MS);
+}
+
+export async function resetPassword(email: string, code: string, password: string, passwordConfirmation: string, remember = false): Promise<AuthUser> {
+  const response = await getJson<{ data: { user: AuthUser; token: string } }>("/auth/password/reset", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, code, password, password_confirmation: passwordConfirmation }),
+  }, AUTH_FETCH_TIMEOUT_MS);
+  persistAuthToken(response.data.token, remember);
+  return response.data.user;
+}
+
+export async function getCurrentUser(): Promise<AuthUser | null> {
+  try {
+    const response = await getJson<{ data: AuthUser }>("/auth/me", { headers: authHeaders() });
+    return response.data;
+  } catch {
+    return null;
+  }
+}
+
+export async function logout(): Promise<void> {
+  await getJson<void>("/auth/logout", { method: "POST", headers: authHeaders() });
+  localStorage.removeItem(AUTH_TOKEN_KEY);
+  sessionStorage.removeItem(AUTH_TOKEN_KEY);
+}
+
+export async function updateTwoFactor(enabled: boolean): Promise<AuthUser> {
+  const response = await getJson<{ data: AuthUser }>("/auth/settings", {
+    method: "PUT",
+    headers: { ...authHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ two_factor_enabled: enabled }),
+  });
+  return response.data;
+}
+
+export async function requestPasswordChangeCode(): Promise<void> {
+  await getJson<void>("/auth/password/change-code", {
+    method: "POST",
+    headers: authHeaders(),
+  }, AUTH_FETCH_TIMEOUT_MS);
+}
+
+export async function updatePassword(code: string, password: string, passwordConfirmation: string): Promise<void> {
+  await getJson<void>("/auth/password", {
+    method: "PUT",
+    headers: { ...authHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ code, password, password_confirmation: passwordConfirmation }),
+  }, AUTH_FETCH_TIMEOUT_MS);
+}
+
+export async function updateProfile(name: string): Promise<AuthUser> {
+  const response = await getJson<{ data: AuthUser }>("/auth/profile", {
+    method: "PUT",
+    headers: { ...authHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+  return response.data;
+}
+
+export async function getUserLocations(): Promise<UserLocation[]> {
+  const response = await getJson<{ data: UserLocation[] }>("/auth/locations", { headers: authHeaders() });
+  return response.data;
+}
+
+export async function addUserLocation(input: {
+  area_id: number;
+  label?: string;
+  latitude?: number;
+  longitude?: number;
+  source: "gps" | "manual";
+}): Promise<void> {
+  await getJson<void>("/auth/locations", {
+    method: "POST",
+    headers: { ...authHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+}
+
+export async function removeUserLocation(id: number): Promise<void> {
+  await getJson<void>(`/auth/locations/${id}`, { method: "DELETE", headers: authHeaders() });
+}
+
+export async function getPushPublicKey(): Promise<string | null> {
+  const response = await getJson<{ data: { public_key: string | null; configured: boolean } }>("/auth/push/public-key");
+  return response.data.configured ? response.data.public_key : null;
+}
+
+export async function subscribeToPush(): Promise<void> {
+  if (!("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window)) {
+    throw new Error("Browser ini belum mendukung notifikasi push. Di iPhone, tambahkan SIGAB ke Home Screen terlebih dahulu.");
+  }
+  const publicKey = await getPushPublicKey();
+  if (!publicKey) throw new Error("Notifikasi belum dikonfigurasi di server.");
+  const permission = await Notification.requestPermission();
+  if (permission !== "granted") throw new Error("Izin notifikasi tidak diberikan.");
+  const registration = await navigator.serviceWorker.register("/sw.js");
+  const padding = "=".repeat((4 - (publicKey.length % 4)) % 4);
+  const subscription = await registration.pushManager.subscribe({
+    userVisibleOnly: true,
+    applicationServerKey: Uint8Array.from(
+      atob(`${publicKey.replace(/-/g, "+").replace(/_/g, "/")}${padding}`),
+      (char) => char.charCodeAt(0),
+    ),
+  });
+  const json = subscription.toJSON();
+  if (!json.endpoint || !json.keys?.p256dh || !json.keys.auth) throw new Error("Subscription notifikasi tidak lengkap.");
+  await getJson<void>("/auth/push/subscribe", {
+    method: "POST",
+    headers: { ...authHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ endpoint: json.endpoint, keys: json.keys }),
+  });
+}
+
+export async function unsubscribeFromPush(): Promise<void> {
+  if (!("serviceWorker" in navigator)) return;
+  const registration = await navigator.serviceWorker.getRegistration("/sw.js");
+  const subscription = await registration?.pushManager.getSubscription();
+  if (!subscription) return;
+  await getJson<void>("/auth/push/subscribe", {
+    method: "DELETE",
+    headers: { ...authHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ endpoint: subscription.endpoint }),
+  });
+  await subscription.unsubscribe();
+}
+
 export async function getLatestPredictions(): Promise<ApiPrediction[]> {
   const response = await getJson<{ data: ApiPrediction[] }>("/v1/predictions/latest");
   return response.data;
@@ -212,8 +452,56 @@ export async function getLatestPredictions(): Promise<ApiPrediction[]> {
 export async function getAreaRisk(slug: string): Promise<{ area: ApiArea; prediction: ApiRiskPrediction | null }> {
   const response = await getJson<{ data: { area: ApiArea; prediction: ApiRiskPrediction | null } }>(
     `/v1/areas/${encodeURIComponent(slug)}/risk`,
+    RISK_FETCH_TIMEOUT_MS,
   );
   return response.data;
+}
+
+type AreaRiskResult = { area: ApiArea; prediction: ApiRiskPrediction | null };
+
+// In-memory cache for getAreaRisk so the wilayah detail page does not refetch
+// the same slug while navigating. The backend serves every score from one
+// shared district weather snapshot, so no cross-page override is needed.
+const riskCache = new Map<string, { data: AreaRiskResult; expiresAt: number }>();
+const riskInFlight = new Map<string, Promise<AreaRiskResult>>();
+const RISK_CACHE_TTL_MS = 300_000;
+
+export function getCachedAreaRisk(slug: string): Promise<AreaRiskResult> {
+  const cached = riskCache.get(slug);
+  if (cached && cached.expiresAt > Date.now()) {
+    return Promise.resolve(cached.data);
+  }
+  // Share one request per slug: concurrent callers (map zones, alert list,
+  // detail panel) must not each pay the per-area upstream latency.
+  const inFlight = riskInFlight.get(slug);
+  if (inFlight !== undefined) {
+    return inFlight;
+  }
+  const request = getAreaRisk(slug)
+    .then((data) => {
+      riskCache.set(slug, { data, expiresAt: Date.now() + RISK_CACHE_TTL_MS });
+      return data;
+    })
+    .catch((error: unknown) => {
+      // A refresh that fails should not blank out a stale score we already hold.
+      if (cached !== undefined) return cached.data;
+      throw error;
+    })
+    .finally(() => {
+      riskInFlight.delete(slug);
+    });
+  riskInFlight.set(slug, request);
+  return request;
+}
+
+export function invalidateRiskCache(slug?: string): void {
+  if (slug === undefined) {
+    riskCache.clear();
+    riskInFlight.clear();
+    return;
+  }
+  riskCache.delete(slug);
+  riskInFlight.delete(slug);
 }
 
 export type ApiEnvironmentDataset = {

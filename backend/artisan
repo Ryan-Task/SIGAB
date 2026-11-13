@@ -6,6 +6,23 @@ use Symfony\Component\Console\Input\ArgvInput;
 
 define('LARAVEL_START', microtime(true));
 
+// The Windows PHP build may point OpenSSL at a missing system config. Restart
+// Artisan once with the config shipped alongside the active PHP installation.
+if (PHP_OS_FAMILY === 'Windows' && getenv('SIGAB_ARTISAN_OPENSSL_CONFIGURED') !== '1') {
+    $configuredPath = getenv('OPENSSL_CONF');
+    $phpConfigPath = dirname(PHP_BINARY).DIRECTORY_SEPARATOR.'extras'.DIRECTORY_SEPARATOR.'ssl'.DIRECTORY_SEPARATOR.'openssl.cnf';
+    if ((!is_string($configuredPath) || !is_file($configuredPath)) && is_file($phpConfigPath)) {
+        $environment = getenv();
+        $environment['OPENSSL_CONF'] = $phpConfigPath;
+        $environment['SIGAB_ARTISAN_OPENSSL_CONFIGURED'] = '1';
+        $arguments = array_map('escapeshellarg', array_slice($argv, 1));
+        $command = escapeshellarg(PHP_BINARY).' '.escapeshellarg(__FILE__);
+        if ($arguments !== []) $command .= ' '.implode(' ', $arguments);
+        $process = proc_open($command, [STDIN, STDOUT, STDERR], $pipes, __DIR__, $environment);
+        exit(is_resource($process) ? proc_close($process) : 1);
+    }
+}
+
 // Register the Composer autoloader...
 require __DIR__.'/vendor/autoload.php';
 

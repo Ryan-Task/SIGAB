@@ -3,20 +3,25 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
+import { getCurrentUser, logout, type AuthUser } from "../../lib/api";
 
-const navItems = [
+const navItems: Array<{ label: string; href: string; requiresAuth?: boolean }> = [
   { label: "Beranda", href: "/" },
   { label: "Peta Risiko", href: "/peta-risiko" },
   { label: "Peringatan", href: "/peringatan" },
   { label: "Data Historis", href: "/data-historis" },
   { label: "Mitigasi", href: "/mitigasi" },
+  { label: "Daerah Anda", href: "/daerah-anda", requiresAuth: true },
 ];
 
 export default function SiteNav() {
   const pathname = usePathname();
   const [isScrolled, setIsScrolled] = useState(false);
+  const [user, setUser] = useState<AuthUser | null>(null);
   const isHome = pathname === "/";
   const useLightNavigation = isScrolled || !isHome;
+  const visibleNavItems = navItems.filter((item) => !item.requiresAuth || user !== null);
+  const adminLink = user?.is_admin ? { label: "Dashboard Admin", href: "/admin" } : null;
 
   useEffect(() => {
     const handleScroll = () => {
@@ -31,6 +36,10 @@ export default function SiteNav() {
     };
   }, []);
 
+  useEffect(() => {
+    getCurrentUser().then(setUser);
+  }, [pathname]);
+
   return (
     <header
       className={`fixed left-0 right-0 top-0 z-50 border-b transition-all duration-500 ease-out ${
@@ -41,7 +50,7 @@ export default function SiteNav() {
     >
       <div className="relative mx-auto flex max-w-[1280px] items-center justify-end gap-6 px-6 py-4">
         <nav className="absolute left-1/2 hidden -translate-x-1/2 items-center gap-6 text-[12px] font-semibold uppercase tracking-[0.06em] text-slate-600 xl:flex">
-          {navItems.map((item) => {
+          {visibleNavItems.map((item) => {
             const active = item.href === "/"
               ? pathname === "/"
               : pathname.startsWith(item.href);
@@ -82,18 +91,26 @@ export default function SiteNav() {
               </Link>
             );
           })}
+          {adminLink && <Link href={adminLink.href} className="py-1 text-[#f38a50] hover:text-[#123d61]">{adminLink.label}</Link>}
         </nav>
 
         <Link
-          href="/peta-risiko"
-          className={`rounded-full px-4 py-2 text-xs font-semibold shadow-sm transition ${
-            useLightNavigation
-              ? "bg-[#26669a] text-white hover:bg-[#1d527c]"
-              : "border border-white/40 bg-white/10 text-white backdrop-blur-sm hover:bg-white/20"
+          href={user ? "/profil" : "/login"}
+          className={`rounded-full border px-4 py-2 text-xs font-semibold transition ${
+            useLightNavigation ? "border-[#26669a] text-[#26669a] hover:bg-white" : "border-white/40 text-white hover:bg-white/20"
           }`}
         >
-          Lihat Peta
+          {user ? `Profil ${user.name}` : "Masuk"}
         </Link>
+        {user && (
+          <button type="button" onClick={() => logout().then(() => setUser(null))} className={`rounded-full border px-4 py-2 text-xs font-semibold transition ${
+            useLightNavigation
+              ? "border-red-300 bg-red-50 text-red-600 hover:border-red-500 hover:bg-red-100"
+              : "border-red-300/70 bg-red-500/10 text-red-100 hover:border-red-200 hover:bg-red-500/20"
+          }`}>
+            Keluar
+          </button>
+        )}
       </div>
 
       <nav
@@ -101,7 +118,7 @@ export default function SiteNav() {
           useLightNavigation ? "text-slate-600" : "text-white/85"
         }`}
       >
-        {navItems.map((item) => (
+        {visibleNavItems.map((item) => (
           <Link
             key={item.href}
             href={item.href}
@@ -112,6 +129,7 @@ export default function SiteNav() {
             {item.label}
           </Link>
         ))}
+        {adminLink && <Link href={adminLink.href} className="whitespace-nowrap text-[#f38a50] hover:text-[#123d61]">{adminLink.label}</Link>}
       </nav>
     </header>
   );

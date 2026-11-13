@@ -38,10 +38,20 @@ function escapeHtml(value: string): string {
 export default function RiskMap({ areas, selectedArea, onSelect }: Props) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<L.Map | null>(null);
+  const markersRef = useRef(new Map<string, L.CircleMarker>());
+  const selectedSlugRef = useRef<string | null>(null);
+  selectedSlugRef.current = selectedArea?.slug ?? null;
 
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
+
+    // React can hand back a node whose previous Leaflet instance never finished
+    // tearing down, which makes `L.map` throw "already initialized".
+    const staleId = container as unknown as { _leaflet_id?: number };
+    if (staleId._leaflet_id !== undefined) {
+      delete staleId._leaflet_id;
+    }
 
     const map = L.map(container, {
       center: [-7.45, 112.7],
@@ -55,8 +65,20 @@ export default function RiskMap({ areas, selectedArea, onSelect }: Props) {
     }).addTo(map);
 
     return () => {
-      map.remove();
       mapRef.current = null;
+      markersRef.current.clear();
+
+      try {
+        // `map.remove()` deletes `_mapPane` but leaves `_animatingZoom` set and the
+        // 250ms zoom-transition timer armed; when that timer fires it calls
+        // `_onZoomTransitionEnd` -> `_move` -> `_getMapPanePos` -> `getPosition(undefined)`
+        // and throws "Cannot read properties of undefined (reading '_leaflet_pos')".
+        // `_onZoomTransitionEnd` bails out when the flag is false, so clear it here.
+        (map as unknown as { _animatingZoom?: boolean })._animatingZoom = false;
+        map.remove();
+      } catch {
+        // The teardown races with React unmount; there is nothing left to release.
+      }
     };
   }, []);
 
@@ -65,6 +87,9 @@ export default function RiskMap({ areas, selectedArea, onSelect }: Props) {
     if (!map) return;
 
     const layers = L.layerGroup().addTo(map);
+    const markers = markersRef.current;
+    markers.clear();
+    const selectedSlug = selectedSlugRef.current;
     const positioned = areas.filter((zone) => Number.isFinite(zone.latitude) && Number.isFinite(zone.longitude));
 
     positioned.forEach((zone) => {
@@ -78,7 +103,7 @@ export default function RiskMap({ areas, selectedArea, onSelect }: Props) {
       }).addTo(layers);
 
       const marker = L.circleMarker(center, {
-        radius: zone.areas.some((area) => area.slug === selectedArea?.slug) ? 12 : 9,
+        radius: zone.areas.some((area) => area.slug === selectedSlug) ? 12 : 9,
         color: "#ffffff",
         weight: 3,
         fillColor: zone.representative.tone,
@@ -98,28 +123,50 @@ export default function RiskMap({ areas, selectedArea, onSelect }: Props) {
         `<br>Hujan: ${rainfall} mm${temperature}`,
       );
       marker.on("click", () => onSelect(zone.representative));
+      zone.areas.forEach((area) => markers.set(area.slug, marker));
     });
 
     return () => {
-      if (mapRef.current === map) {
+      try {
         layers.remove();
+      } catch {
+        // Parent map already removed during unmount.
       }
+      markers.clear();
     };
-  }, [areas, onSelect, selectedArea]);
+  }, [areas, onSelect]);
+
+  // Highlight updates only mutate the marker radius instead of rebuilding every
+  // Leaflet layer, which keeps selection instant.
+  useEffect(() => {
+    markersRef.current.forEach((marker, slug) => {
+      try {
+        marker.setRadius(slug === selectedArea?.slug ? 12 : 9);
+      } catch {
+        // Marker already detached with its map.
+      }
+    });
+  }, [selectedArea]);
 
   useEffect(() => {
     const map = mapRef.current;
     const positioned = areas.filter((zone) => Number.isFinite(zone.latitude) && Number.isFinite(zone.longitude));
     if (map && positioned.length > 0) {
       const bounds = L.latLngBounds(positioned.map((zone) => [zone.latitude, zone.longitude]));
-      map.fitBounds(bounds, { padding: [20, 20], maxZoom: 12 });
+      // fitBounds pans/zooms with animation by default; during unmount that
+      // animation outlives the map. `animate: false` still updates the view.
+      map.fitBounds(bounds, { padding: [20, 20], maxZoom: 12, animate: false });
     }
   }, [areas]);
 
   useEffect(() => {
     const map = mapRef.current;
     if (map && selectedArea?.centroid_lat && selectedArea.centroid_lng) {
-      map.setView([Number(selectedArea.centroid_lat), Number(selectedArea.centroid_lng)], Math.max(map.getZoom(), 14), { animate: true });
+      map.setView(
+        [Number(selectedArea.centroid_lat), Number(selectedArea.centroid_lng)],
+        Math.max(map.getZoom(), 14),
+        { animate: false },
+      );
     }
   }, [selectedArea]);
 

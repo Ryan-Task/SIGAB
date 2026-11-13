@@ -2,9 +2,9 @@
 
 import { motion } from "framer-motion";
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import SiteNav from "../components/SiteNav";
-import { getAreaRisk, getLatestPredictions, type ApiPrediction } from "../../lib/api";
+import { getLatestPredictions, type ApiPrediction } from "../../lib/api";
 import type { MapZone } from "./RiskMap";
 import dynamic from "next/dynamic";
 
@@ -31,19 +31,6 @@ function toRiskArea(prediction: ApiPrediction): RiskArea {
   };
 }
 
-function withRealtimePrediction(area: RiskArea, prediction: Awaited<ReturnType<typeof getAreaRisk>>["prediction"]): RiskArea {
-  if (prediction === null) return area;
-  return toRiskArea({
-    ...area,
-    score: prediction.score,
-    risk_level: prediction.risk_level,
-    status: prediction.status,
-    explanation: prediction.explanation,
-    calculated_at: prediction.realtime_calculated_at ?? prediction.calculated_at,
-    current_weather_score: prediction.current_weather_score,
-    realtime_calculated_at: prediction.realtime_calculated_at,
-  });
-}
 
 function regencyLabel(area: Pick<ApiPrediction, "regency_code" | "regency_name">): string {
   if (area.regency_code === "35.15") return "Kabupaten Sidoarjo";
@@ -139,10 +126,6 @@ function Footer() {
 }
 
 export default function PetaRisikoPage() {
-  const realtimeCacheRef = useRef(new Map<string, {
-    prediction: Awaited<ReturnType<typeof getAreaRisk>>["prediction"];
-    expiresAt: number;
-  }>());
   const [riskAreas, setRiskAreas] = useState<RiskArea[]>([]);
   const [selectedArea, setSelectedArea] = useState<RiskArea | null>(null);
   const [filter, setFilter] = useState<"Semua" | RiskLevel>("Semua");
@@ -154,40 +137,8 @@ export default function PetaRisikoPage() {
   const [pageSize, setPageSize] = useState<5 | 10>(5);
   const [page, setPage] = useState(1);
   const [error, setError] = useState<string | null>(null);
-  const [selectedRealtimeLoading, setSelectedRealtimeLoading] = useState(false);
-  const [loadingSlugs, setLoadingSlugs] = useState<Set<string>>(new Set());
-  const [realtimeReadySlugs, setRealtimeReadySlugs] = useState<Set<string>>(new Set());
-  const [selectedRefreshToken, setSelectedRefreshToken] = useState(0);
   const latestLoadTokenRef = useRef(0);
-  const getCachedRisk = (slug: string) => {
-    const cached = realtimeCacheRef.current.get(slug);
-    if (cached && cached.expiresAt > Date.now()) {
-      return Promise.resolve({ prediction: cached.prediction });
-    }
-    return getAreaRisk(slug).then((result) => {
-      realtimeCacheRef.current.set(slug, {
-        prediction: result.prediction,
-        expiresAt: Date.now() + 300_000,
-      });
-      return result;
-    });
-  };
-  const selectArea = (area: RiskArea) => {
-    const cached = realtimeCacheRef.current.get(area.slug);
-    setSelectedArea(cached && cached.expiresAt > Date.now()
-      ? withRealtimePrediction(area, cached.prediction)
-      : { ...area, score: null });
-    if (cached && cached.expiresAt > Date.now()) {
-      setRealtimeReadySlugs((current) => new Set(current).add(area.slug));
-    } else {
-      setRealtimeReadySlugs((current) => {
-        const next = new Set(current);
-        next.delete(area.slug);
-        return next;
-      });
-    }
-    setSelectedRefreshToken((token) => token + 1);
-  };
+  const selectArea = useCallback((area: RiskArea) => setSelectedArea(area), []);
   useEffect(() => {
     const load = () => {
       const loadToken = latestLoadTokenRef.current + 1;
@@ -195,21 +146,10 @@ export default function PetaRisikoPage() {
       return getLatestPredictions()
       .then((predictions) => {
         if (loadToken !== latestLoadTokenRef.current) return;
-        const areas = predictions.map(toRiskArea).map((area) => {
-          const cached = realtimeCacheRef.current.get(area.slug);
-          return cached && cached.expiresAt > Date.now()
-            ? withRealtimePrediction(area, cached.prediction)
-            : area;
-        });
+        // /v1/predictions/latest already carries the same realtime blend as the
+        // wilayah detail page, so no per-slug override is applied here.
+        const areas = predictions.map(toRiskArea);
         setRiskAreas(areas);
-        setRealtimeReadySlugs(new Set(
-          areas
-            .filter((area) => {
-              const cached = realtimeCacheRef.current.get(area.slug);
-              return cached !== undefined && cached.expiresAt > Date.now();
-            })
-            .map((area) => area.slug),
-        ));
         setSelectedArea((current) => current
           ? areas.find((area) => area.slug === current.slug) ?? areas[0] ?? null
           : areas[0] ?? null);
@@ -224,134 +164,42 @@ export default function PetaRisikoPage() {
     const refresh = window.setInterval(load, 300_000);
     return () => window.clearInterval(refresh);
   }, []);
-  useEffect(() => {
-    if (!selectedArea) return;
-    let active = true;
-    setSelectedRealtimeLoading(true);
-    getCachedRisk(selectedArea.slug)
-      .then(({ prediction }) => {
-        if (!active) return;
-        setSelectedRealtimeLoading(false);
-        if (prediction === null) return;
-        setRiskAreas((areas) => areas.map((area) => area.slug === selectedArea.slug
-          ? withRealtimePrediction(area, prediction)
-          : area));
-        setRealtimeReadySlugs((slugs) => new Set(slugs).add(selectedArea.slug));
-        setSelectedArea((area) => area?.slug === selectedArea.slug
-          ? withRealtimePrediction(area, prediction)
-          : area);
-      })
-      .catch(() => {
-        if (active) {
-          setSelectedRealtimeLoading(false);
-          setError("Skor risiko banjir real-time belum dapat diperbarui.");
-        }
-      });
-    return () => { active = false; };
-  }, [selectedArea?.slug, selectedRefreshToken]);
+
   useEffect(() => {
     setPage(1);
   }, [filter, regency, search, pageSize]);
-  const regencies = [...new Map(
+  const regencies = useMemo(() => [...new Map(
     riskAreas
       .filter((area) => area.regency_code)
       .map((area) => [area.regency_code as string, regencyLabel(area)] as const),
-  )].sort((left, right) => left[1].localeCompare(right[1], "id"));
-  const orderedAreas = [...riskAreas].sort((left, right) => {
+  )].sort((left, right) => left[1].localeCompare(right[1], "id")), [riskAreas]);
+  const orderedAreas = useMemo(() => [...riskAreas].sort((left, right) => {
     const regencyComparison = (left.regency_name ?? "").localeCompare(right.regency_name ?? "", "id");
     return regencyComparison || left.name.localeCompare(right.name, "id");
-  });
+  }), [riskAreas]);
   const selectedOptions = selectedRegency === "Semua"
     ? []
     : orderedAreas.filter((area) =>
       area.regency_code === selectedRegency &&
       area.name.toLowerCase().startsWith(selectedAreaSearch.trim().toLowerCase()),
     );
-  const visibleAreas = riskAreas.filter((area) =>
+  const visibleAreas = useMemo(() => riskAreas.filter((area) =>
     (filter === "Semua" || area.level === filter) &&
     (regency === "Semua" || area.regency_code === regency) &&
     area.name.toLowerCase().includes(search.toLowerCase()),
   ).sort((left, right) => sort === "name"
     ? left.name.localeCompare(right.name, "id")
-    : (right.score ?? -1) - (left.score ?? -1));
+    : (right.score ?? -1) - (left.score ?? -1)), [riskAreas, filter, regency, search, sort]);
   const totalPages = Math.max(1, Math.ceil(visibleAreas.length / pageSize));
   const pagedAreas = visibleAreas.slice((page - 1) * pageSize, page * pageSize);
   const selectedExactMatch = selectedOptions.some((area) => area.name.toLowerCase() === selectedAreaSearch.trim().toLowerCase());
   const paginationItems = getPaginationItems(page, totalPages);
-  const mapZones = createMapZones(visibleAreas);
-  const pagedSlugsKey = pagedAreas.map((area) => area.slug).join("|");
+  const mapZones = useMemo(() => createMapZones(visibleAreas), [visibleAreas]);
+
   useEffect(() => {
     setPage((currentPage) => Math.min(currentPage, totalPages));
   }, [totalPages]);
-  useEffect(() => {
-    let active = true;
-    const slugs = pagedSlugsKey ? pagedSlugsKey.split("|") : [];
-    if (slugs.length === 0) return () => { active = false; };
-    setLoadingSlugs(new Set(slugs));
-    setRealtimeReadySlugs((current) => {
-      const next = new Set(current);
-      slugs.forEach((slug) => next.delete(slug));
-      return next;
-    });
-    Promise.all(slugs.map((slug) => getCachedRisk(slug)
-      .then(({ prediction }) => ({ slug, prediction, error: false }))
-      .catch(() => ({ slug, prediction: null, error: true }))))
-      .then((results) => {
-        if (!active) return;
-        setLoadingSlugs((current) => {
-          const next = new Set(current);
-          slugs.forEach((slug) => next.delete(slug));
-          return next;
-        });
-        setRealtimeReadySlugs((current) => {
-          const next = new Set(current);
-          results.forEach((result) => {
-            if (result.prediction !== null) next.add(result.slug);
-          });
-          return next;
-        });
-        const realtimeBySlug = new Map(
-          results
-            .filter((result) => result.prediction !== null)
-            .map((result) => [result.slug, result.prediction] as const),
-        );
-        if (results.some((result) => result.error)) {
-          setError("Sebagian skor risiko banjir real-time belum dapat diperbarui.");
-        }
-        if (realtimeBySlug.size === 0) return;
-        setRiskAreas((areas) => areas.map((area) => {
-          const prediction = realtimeBySlug.get(area.slug);
-          if (prediction === undefined || prediction === null) return area;
-          return {
-            ...withRealtimePrediction(area, prediction),
-          };
-        }));
-        setSelectedArea((area) => {
-          if (!area) return area;
-          const prediction = realtimeBySlug.get(area.slug);
-          if (prediction === undefined || prediction === null) return area;
-          return {
-            ...area,
-            score: prediction.score,
-            risk_level: prediction.risk_level,
-            status: prediction.status,
-            explanation: prediction.explanation,
-            calculated_at: prediction.realtime_calculated_at ?? prediction.calculated_at,
-          };
-        });
-      })
-      .catch(() => {
-        if (active) {
-          setLoadingSlugs((current) => {
-            const next = new Set(current);
-            slugs.forEach((slug) => next.delete(slug));
-            return next;
-          });
-          setError("Sebagian skor risiko banjir real-time belum dapat diperbarui.");
-        }
-      });
-    return () => { active = false; };
-  }, [page, pageSize, filter, regency, search, sort, riskAreas.length]);
+
 
   return (
     <main className="min-h-screen bg-[#dfeaf0] text-slate-800">
@@ -485,7 +333,7 @@ export default function PetaRisikoPage() {
                 <h2 className="text-3xl font-semibold tracking-[-0.06em] text-[#123d61]">{selectedArea.name}</h2>
               </div>
               <span className={`rounded-full px-3 py-1 text-xs font-bold ${riskColors[selectedArea.level]}`}>
-                {selectedRealtimeLoading ? "Memuat…" : selectedArea.level}
+                {selectedArea.level}
               </span>
             </div>
             <p className="mt-3 text-sm text-slate-600">{selectedArea.detail}</p>
@@ -495,17 +343,17 @@ export default function PetaRisikoPage() {
               <p className="mt-1">{selectedArea.weather.description ?? "Prakiraan cuaca tersedia"}</p>
               <p className="mt-1">
                 Prakiraan hujan {selectedArea.weather.rainfall_mm ?? "-"} mm
-                {selectedArea.weather.temperature_c != null && ` · Suhu ${selectedArea.weather.temperature_c} °C`}
-                {selectedArea.weather.humidity_percent != null && ` · Kelembapan ${selectedArea.weather.humidity_percent}%`}
+                {selectedArea.weather.temperature_c != null && `, suhu ${selectedArea.weather.temperature_c} °C`}
+                {selectedArea.weather.humidity_percent != null && `, kelembapan ${selectedArea.weather.humidity_percent}%`}
               </p>
             </div>
             <div className="mt-8 flex items-end gap-3">
               <span className="text-7xl font-semibold leading-none tracking-[-0.1em] text-[#123d61]">
-                {selectedRealtimeLoading ? "…" : selectedArea.score ?? "—"}
+                {selectedArea.score ?? "—"}
               </span>
               <span className="pb-2 text-sm text-slate-500">
-                skor risiko banjir<br />dari 100
-                {selectedRealtimeLoading && <small className="mt-1 block text-xs">Memperbarui…</small>}
+                Skor risiko banjir<br />dari 100
+
               </span>
             </div>
             <div className="mt-6 h-2 rounded-full bg-white">
