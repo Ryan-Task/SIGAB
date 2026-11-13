@@ -6,9 +6,11 @@ use App\Http\Controllers\Controller;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 
 class AreaDataController extends Controller
 {
@@ -88,6 +90,7 @@ class AreaDataController extends Controller
 
     public function risk(string $slug): JsonResponse
     {
+        $this->syncHistoryFileIfChanged();
         $area = $this->findArea($slug);
         $prediction = DB::table('risk_predictions')
             ->where('area_id', $area->id)
@@ -522,6 +525,7 @@ class AreaDataController extends Controller
 
     public function floodEvents(Request $request): JsonResponse
     {
+        $this->syncHistoryFileIfChanged();
         $year = $request->integer('year');
         $regencyCode = $request->string('regency_code')->toString();
         if ($request->filled('year') && ($year < 1900 || $year > now()->year + 1)) {
@@ -595,6 +599,7 @@ class AreaDataController extends Controller
 
     public function floodEventYears(): JsonResponse
     {
+        $this->syncHistoryFileIfChanged();
         $yearExpression = DB::connection()->getDriverName() === 'sqlite'
             ? "strftime('%Y', events.started_at)"
             : 'YEAR(events.started_at)';
@@ -615,6 +620,7 @@ class AreaDataController extends Controller
 
     public function historySummary(Request $request): JsonResponse
     {
+        $this->syncHistoryFileIfChanged();
         $isSqlite = DB::connection()->getDriverName() === 'sqlite';
         $hourExpression = $isSqlite
             ? "CAST(strftime('%H', observed_at) AS INTEGER)"
@@ -835,6 +841,43 @@ class AreaDataController extends Controller
             '35.78' => 'Kota Surabaya',
             default => $code,
         };
+    }
+
+    private function syncHistoryFileIfChanged(): void
+    {
+        $path = storage_path('app/private/bpbd-banjir-histori.csv');
+        if (! is_file($path) || ! is_readable($path)) {
+            return;
+        }
+
+        $fingerprint = $path.':'.filesize($path).':'.filemtime($path);
+        $cacheKey = 'flood-history-file:'.sha1($path);
+        if (Cache::get($cacheKey) === $fingerprint) {
+            return;
+        }
+
+        $lock = Cache::lock($cacheKey.':lock', 120);
+        if (! $lock->get()) {
+            return;
+        }
+
+        try {
+            if (Cache::get($cacheKey) !== $fingerprint) {
+                $exitCode = Artisan::call('history:import-detailed', ['path' => $path]);
+                if ($exitCode !== 0) {
+                    throw new \RuntimeException(trim(Artisan::output()) ?: 'Import histori banjir gagal.');
+                }
+                Cache::forever($cacheKey, $fingerprint);
+            }
+        } catch (\Throwable $error) {
+            Log::error('Automatic flood history import failed.', [
+                'path' => $path,
+                'error' => $error->getMessage(),
+            ]);
+            throw $error;
+        } finally {
+            $lock->release();
+        }
     }
 
     private function findArea(string $slug): object
