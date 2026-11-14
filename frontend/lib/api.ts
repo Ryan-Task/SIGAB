@@ -186,6 +186,7 @@ function apiUrl(path: string): string {
 
 const FETCH_TIMEOUT_MS = 10_000;
 const AUTH_FETCH_TIMEOUT_MS = 45_000;
+const PUSH_FETCH_TIMEOUT_MS = 60_000;
 // /v1/areas/{slug}/risk recomputes the score from an upstream weather provider.
 // The Laravel dev server handles one request at a time, so a batch of risk
 // calls queues up and easily outlives the default timeout. Give it more room.
@@ -206,7 +207,15 @@ async function getJson<T>(
 ): Promise<T> {
   const init = typeof initOrTimeout === "number" ? {} : (initOrTimeout ?? {});
   const timeoutMs = timeoutOverrideMs ?? (typeof initOrTimeout === "number" ? initOrTimeout : undefined);
-  const response = await fetchWithTimeout(apiUrl(path), { cache: "no-store", ...init }, timeoutMs);
+  let response: Response;
+  try {
+    response = await fetchWithTimeout(apiUrl(path), { cache: "no-store", ...init }, timeoutMs);
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new Error("Permintaan ke server terlalu lama. Silakan coba lagi.");
+    }
+    throw error;
+  }
   if (!response.ok) {
     let message = `API request failed: ${response.status}`;
     try {
@@ -447,7 +456,7 @@ export async function removeUserLocation(id: number): Promise<void> {
 }
 
 export async function getPushPublicKey(): Promise<string | null> {
-  const response = await getJson<{ data: { public_key: string | null; configured: boolean } }>("/auth/push/public-key");
+  const response = await getJson<{ data: { public_key: string | null; configured: boolean } }>("/auth/push/public-key", PUSH_FETCH_TIMEOUT_MS);
   return response.data.configured ? response.data.public_key : null;
 }
 
@@ -460,8 +469,9 @@ export async function subscribeToPush(): Promise<void> {
   const permission = await Notification.requestPermission();
   if (permission !== "granted") throw new Error("Izin notifikasi tidak diberikan.");
   const registration = await navigator.serviceWorker.register("/sw.js");
+  const existingSubscription = await registration.pushManager.getSubscription();
   const padding = "=".repeat((4 - (publicKey.length % 4)) % 4);
-  const subscription = await registration.pushManager.subscribe({
+  const subscription = existingSubscription ?? await registration.pushManager.subscribe({
     userVisibleOnly: true,
     applicationServerKey: Uint8Array.from(
       atob(`${publicKey.replace(/-/g, "+").replace(/_/g, "/")}${padding}`),
@@ -474,7 +484,7 @@ export async function subscribeToPush(): Promise<void> {
     method: "POST",
     headers: { ...authHeaders(), "Content-Type": "application/json" },
     body: JSON.stringify({ endpoint: json.endpoint, keys: json.keys }),
-  });
+  }, PUSH_FETCH_TIMEOUT_MS);
 }
 
 export async function unsubscribeFromPush(): Promise<void> {
@@ -486,7 +496,7 @@ export async function unsubscribeFromPush(): Promise<void> {
     method: "DELETE",
     headers: { ...authHeaders(), "Content-Type": "application/json" },
     body: JSON.stringify({ endpoint: subscription.endpoint }),
-  });
+  }, PUSH_FETCH_TIMEOUT_MS);
   await subscription.unsubscribe();
 }
 

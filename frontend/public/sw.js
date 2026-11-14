@@ -2,6 +2,8 @@ self.addEventListener("push", (event) => {
   const data = event.data ? event.data.json() : {};
   event.waitUntil(self.registration.showNotification(data.title || "Peringatan SIGAB", {
     body: data.body || "Ada pembaruan kondisi wilayah pantauan Anda.",
+    icon: data.icon || "/sigab-notification.svg",
+    badge: data.badge || "/sigab-notification.svg",
     tag: data.tag || "sigab-alert",
     renotify: true,
     requireInteraction: Boolean(data.urgent),
