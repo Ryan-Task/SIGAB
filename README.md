@@ -247,24 +247,6 @@ Worker berjalan secara berkelanjutan, mengambil data sesuai cakupan dan
 interval sinkronisasi, lalu mengirimkan hasilnya ke Laravel. Tekan `Ctrl+C`
 untuk menghentikannya.
 
-Untuk cakupan sinkronisasi tertentu, variabel berikut dapat diatur sebelum
-menjalankan worker:
-
-```powershell
-$env:SIGAB_AREA_SCOPE="sidoarjo-surabaya"
-$env:SIGAB_AREA_SAMPLE_PER_DISTRICT="0"
-$env:SIGAB_SYNC_BATCH_SIZE="5"
-$env:SIGAB_SYNC_INTERVAL_SECONDS="300"
-$env:SIGAB_BMKG_REQUEST_DELAY_SECONDS="3"
-$env:SIGAB_BMKG_MAX_RETRIES="4"
-$env:SIGAB_ENVIRONMENT_RIVER_ENABLED="1"
-python -m sigab_data.sync
-```
-
-Gunakan cakupan yang lebih kecil untuk pengujian. Sinkronisasi wilayah yang
-luas dapat membutuhkan waktu lama dan harus mematuhi batas penggunaan layanan
-BMKG serta OpenStreetMap/Overpass.
-
 ## Import Histori Banjir
 
 Dataset histori banjir aktif dibaca dari:
