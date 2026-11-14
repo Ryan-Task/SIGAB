@@ -53,7 +53,7 @@
 
 - PHP 8.3 atau lebih baru
 - Laravel 13
-- SQLite
+- MySQL
 - Laravel API, queue, cache, dan scheduler
 
 ### Layanan dan sumber data pihak ketiga
@@ -72,7 +72,7 @@
 flowchart LR
     U[Pengguna] --> F[Next.js Frontend]
     F --> L[Laravel API]
-    L --> DB[(SQLite)]
+    L --> DB[(MySQL)]
     L --> BMKG[BMKG API]
     L --> OM[Open-Meteo]
     L --> G[Gemini API]
@@ -90,7 +90,7 @@ Alur data utama:
 2. FastAPI menormalisasi data dan menghitung estimasi risiko berdasarkan
    komponen yang tersedia.
 3. Worker mengirim prediksi dan rekaman curah hujan ke Laravel.
-4. Laravel menyimpan data ke SQLite dan menyediakan endpoint API.
+4. Laravel menyimpan data ke MySQL dan menyediakan endpoint API.
 5. Frontend Next.js mengambil data API untuk menampilkan peta, grafik, histori,
    dan peringatan.
 6. Gemini membantu menemukan kandidat sumber data lingkungan. Hasilnya tidak
@@ -102,7 +102,7 @@ Alur data utama:
 .
 ├── backend/
 │   ├── app/                  # Controller, service, model, dan command Laravel
-│   ├── database/             # Migration, seeder, dan database SQLite
+│   ├── database/             # Migration, seeder, dan database MySQL
 │   ├── python/               # FastAPI, model risiko, dan worker sinkronisasi
 │   ├── routes/               # Route API dan web Laravel
 │   └── storage/app/private/  # Dataset dan hasil pipeline privat
