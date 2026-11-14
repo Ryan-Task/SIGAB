@@ -159,13 +159,8 @@ Buka terminal baru, kemudian jalankan:
 cd "D:\LombaUnesa2\SIGAB\backend"
 composer install
 Copy-Item .env.example .env
-php artisan migrate --seed
 ```
 
-Perintah `migrate --seed` membuat atau memperbarui struktur database dan
-menjalankan seeder aplikasi. Seeder saat ini membuat akun administrator demo.
-Jika database sudah pernah digunakan, tinjau migrasi sebelum menjalankan
-perintah yang mengubah data.
 
 ### 4. Konfigurasi environment
 
@@ -208,6 +203,16 @@ Frontend secara default mengakses Laravel melalui
 `http://127.0.0.1:8000`. Jika backend menggunakan alamat berbeda, sesuaikan
 `API_ORIGIN` pada konfigurasi frontend atau konfigurasi proxy Next.js yang
 relevan.
+
+### 5. MIGRATE DAN DB SEED SETELAHB ATUR ENV
+```powershell
+cd "D:\LombaUnesa2\SIGAB\backend"
+php artisan migrate --seed
+```
+Perintah `migrate --seed` membuat atau memperbarui struktur database dan
+menjalankan seeder aplikasi. Seeder saat ini membuat akun administrator demo.
+Jika database sudah pernah digunakan, tinjau migrasi sebelum menjalankan
+perintah yang mengubah data.
 
 ## Cara Menjalankan Aplikasi
 
