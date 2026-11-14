@@ -258,19 +258,19 @@ export function persistAuthToken(token: string, remember = false): void {
   }
 }
 
-export async function requestLoginCode(email: string, name?: string): Promise<void> {
+export async function requestLoginCode(email: string, password: string, mode: "login" | "register", name?: string): Promise<void> {
   await getJson<void>("/auth/request-code", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email, name }),
+    body: JSON.stringify({ email, name, password, mode }),
   }, AUTH_FETCH_TIMEOUT_MS);
 }
 
-export async function emailLogin(email: string, remember = false): Promise<AuthUser | null> {
+export async function emailLogin(email: string, password: string, remember = false): Promise<AuthUser | null> {
   const response = await getJson<{ data?: { user: AuthUser; token: string }; requires_verification?: boolean }>("/auth/email-login", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email }),
+    body: JSON.stringify({ email, password }),
   });
   if (response.requires_verification) return null;
   if (!response.data) throw new Error("Respons login tidak valid.");

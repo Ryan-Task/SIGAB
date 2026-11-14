@@ -27,6 +27,7 @@ export default function LoginPage() {
   const [passwordConfirmation, setPasswordConfirmation] = useState("");
   const [remember, setRemember] = useState(false);
   const [adminPassword, setAdminPassword] = useState("");
+  const isAdminEmail = email.trim().toLowerCase() === "admin123@gmail.com";
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -55,13 +56,13 @@ export default function LoginPage() {
     setBusy(true);
     setMessage("");
     try {
-      if (mode === "login" && email.trim().toLowerCase() === "admin123@gmail.com") {
+      if (mode === "login" && isAdminEmail) {
         await adminLogin(email, adminPassword, remember);
         window.location.replace("/admin");
         return;
       }
       if (mode === "login") {
-        const user = await emailLogin(email, remember);
+        const user = await emailLogin(email, password, remember);
         if (user) {
           window.location.replace("/");
           return;
@@ -70,7 +71,7 @@ export default function LoginPage() {
       if (mode === "forgot") {
         await requestPasswordResetCode(email);
       } else {
-        await requestLoginCode(email, mode === "register" ? name : undefined);
+        await requestLoginCode(email, password, mode, mode === "register" ? name : undefined);
       }
       setStep("code");
       setMessage(mode === "register"
@@ -156,8 +157,17 @@ export default function LoginPage() {
                 <span className="mb-2 block text-xs font-bold uppercase tracking-[0.14em] text-[#26669a]">Alamat email</span>
                 <input required type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="nama@email.com" className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm outline-none transition focus:border-[#26669a] focus:ring-4 focus:ring-[#26669a]/10" />
               </label>
-              {mode === "login" && email.trim().toLowerCase() === "admin123@gmail.com" && (
+              {mode !== "forgot" && mode === "login" && isAdminEmail && (
                 <input required type="password" value={adminPassword} onChange={(event) => setAdminPassword(event.target.value)} placeholder="Password admin" className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-[#26669a]" />
+              )}
+              {mode !== "forgot" && !(mode === "login" && isAdminEmail) && (
+                <label className="block">
+                  <span className="mb-2 block text-xs font-bold uppercase tracking-[0.14em] text-[#26669a]">Password</span>
+                  <input required minLength={8} type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Minimal 8 karakter" className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm outline-none transition focus:border-[#26669a] focus:ring-4 focus:ring-[#26669a]/10" />
+                </label>
+              )}
+              {mode === "register" && (
+                <p className="rounded-xl bg-[#dfeaf0] px-4 py-3 text-xs leading-5 text-slate-600">Setelah password benar, kode OTP akan dikirim sebagai verifikasi dua langkah. Verifikasi dua langkah aktif otomatis.</p>
               )}
               {mode === "login" && (
                 <label className="flex items-center gap-2 text-sm text-slate-600">

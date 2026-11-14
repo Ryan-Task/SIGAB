@@ -23,11 +23,22 @@ class AuthController
         $validated = $request->validate([
             'email' => ['required', 'email', 'max:255'],
             'name' => ['nullable', 'string', 'max:255'],
+            'password' => ['required', 'string', 'min:8'],
+            'mode' => ['required', 'in:login,register'],
         ]);
+        $email = Str::lower(trim($validated['email']));
+        $user = User::where('email', $email)->first();
+        if ($validated['mode'] === 'register' && $user) {
+            return response()->json(['message' => 'Email sudah terdaftar. Silakan pilih Masuk.'], 422);
+        }
+        if ($validated['mode'] === 'login' && (!$user || $user->is_blocked || !Hash::check($validated['password'], $user->password))) {
+            return response()->json(['message' => 'Email atau password tidak valid.'], 401);
+        }
         $this->sendOtp(
-            Str::lower(trim($validated['email'])),
+            $email,
             $validated['name'] ?? null,
             'login',
+            Hash::make($validated['password']),
         );
 
         return response()->json(['message' => 'Kode verifikasi telah dikirim ke email.']);
@@ -54,10 +65,20 @@ class AuthController
         }
 
         DB::table('auth_otps')->where('id', $otp->id)->update(['used_at' => now(), 'updated_at' => now()]);
-        $user = User::firstOrCreate(
-            ['email' => $email],
-            ['name' => $validated['name'] ?: Str::before($email, '@'), 'password' => Str::random(32)],
-        );
+        if (!$otp->password_hash) {
+            return response()->json(['message' => 'Sesi login kedaluwarsa. Silakan masukkan password kembali.'], 422);
+        }
+        $user = User::firstOrNew(['email' => $email]);
+        if (!$user->exists) {
+            $user->name = $validated['name'] ?: Str::before($email, '@');
+            $user->password = $otp->password_hash;
+            $user->two_factor_enabled = true;
+            $user->email_verified_at = now();
+            $user->save();
+        }
+        if ($user->is_blocked) {
+            return response()->json(['message' => 'Akun ini telah diblokir administrator.'], 403);
+        }
 
         return response()->json(['data' => $this->userPayload($user)]);
     }
@@ -99,13 +120,19 @@ class AuthController
 
     public function emailLogin(Request $request): JsonResponse
     {
-        $validated = $request->validate(['email' => ['required', 'email', 'max:255']]);
+        $validated = $request->validate([
+            'email' => ['required', 'email', 'max:255'],
+            'password' => ['required', 'string'],
+        ]);
         $user = User::where('email', Str::lower(trim($validated['email'])))->first();
         if (!$user) {
             return response()->json(['message' => 'Akun belum terdaftar. Silakan pilih Register.'], 404);
         }
         if ($user->is_blocked) {
             return response()->json(['message' => 'Akun ini telah diblokir administrator.'], 403);
+        }
+        if (!Hash::check($validated['password'], $user->password)) {
+            return response()->json(['message' => 'Email atau password tidak valid.'], 401);
         }
         if ($user->two_factor_enabled) {
             return response()->json(['requires_verification' => true]);
@@ -529,7 +556,7 @@ class AuthController
         return rtrim(config('app.frontend_url', 'http://127.0.0.1:3000'), '/') . $path;
     }
 
-    private function sendOtp(string $email, ?string $name, string $purpose): void
+    private function sendOtp(string $email, ?string $name, string $purpose, ?string $passwordHash = null): void
     {
         $code = (string) random_int(100000, 999999);
         DB::table('auth_otps')->where('email', $email)->where('purpose', $purpose)->whereNull('used_at')
@@ -538,6 +565,7 @@ class AuthController
             'email' => $email,
             'code_hash' => Hash::make($code),
             'name' => $name,
+            'password_hash' => $passwordHash,
             'purpose' => $purpose,
             'expires_at' => now()->addMinutes(10),
             'created_at' => now(),
