@@ -19,6 +19,9 @@
 - **Deskripsi:** SIGAB menyajikan informasi geografis untuk membantu pemantauan
   cuaca, curah hujan, histori banjir, kondisi lingkungan, dan estimasi risiko
   banjir hingga tingkat kelurahan/desa.
+- **Solusi:** SIGAB menggabungkan data cuaca, curah hujan, histori banjir,
+  lingkungan, dan peta dalam satu dashboard untuk membantu pengguna memantau
+  kondisi wilayah serta mengambil langkah kesiapsiagaan lebih awal.
 - **Masalah yang diangkat:** Informasi risiko banjir berasal dari berbagai
   sumber dan belum tersaji dalam satu tampilan yang mudah dipahami pada tingkat
   wilayah yang terperinci.
@@ -281,6 +284,47 @@ Hanya kejadian yang dapat dipetakan secara aman ke wilayah kelurahan/desa yang
 dimasukkan ke area detail. Dataset histori sekunder bukan pengganti catatan
 resmi kejadian dari instansi berwenang.
 
+## Test Notifikasi
+
+Gunakan langkah berikut untuk menguji notifikasi browser tanpa menunggu
+kondisi hujan atau risiko banjir nyata:
+
+1. Pastikan Terminal 1 sampai Terminal 4 sedang berjalan dan worker sudah
+   menyelesaikan sinkronisasi pertama.
+2. Buka `http://127.0.0.1:3000`, lalu masuk menggunakan akun pengguna.
+3. Buka halaman **Profil**, simpan setidaknya satu daerah pantauan, lalu
+   aktifkan **Notifikasi daerah pantauan**.
+4. Izinkan notifikasi ketika browser menampilkan permintaan izin.
+5. Buka terminal baru dari folder root `SIGAB`, lalu masuk ke backend:
+
+   ```powershell
+   cd backend
+   ```
+
+6. Ganti alamat email pada command berikut dengan email akun yang digunakan:
+
+   ```powershell
+   php artisan push:test email-anda@example.com --type=test
+   ```
+
+7. Untuk menguji tiga tampilan peringatan otomatis, jalankan satu per satu:
+
+   ```powershell
+   php artisan push:test email-anda@example.com --type=rain-now
+   php artisan push:test email-anda@example.com --type=rain-forecast
+   php artisan push:test email-anda@example.com --type=high-risk
+   ```
+
+   Jenis notifikasi yang diuji adalah:
+
+   - `rain-now`: **Hujan di [nama wilayah]**
+   - `rain-forecast`: **Prakiraan hujan [nama wilayah]**
+   - `high-risk`: **Risiko banjir tinggi [nama wilayah]**
+
+   Notifikasi simulasi memakai format, ikon, tautan detail wilayah, dan
+   penulisan yang sama dengan notifikasi otomatis. Klik notifikasi untuk
+   menguji navigasi ke detail daerah pantauan.
+
 ## Endpoint Utama
 
 - `GET /api/v1/areas`
@@ -351,6 +395,8 @@ resmi atau kepastian terjadinya banjir.
 - Framework dan library mengikuti lisensi masing-masing: Next.js, React,
   TypeScript, Laravel, FastAPI, Pydantic, Framer Motion, Leaflet, dan Tailwind
   CSS.
+- Template, asset, dan kode pihak ketiga yang digunakan mengikuti lisensi dan
+  ketentuan penggunaan dari sumber aslinya.
 - Peta menggunakan Leaflet dan tile OpenStreetMap sesuai kebijakan OpenStreetMap.
 - Data prakiraan cuaca bersumber dari BMKG.
 - Data cuaca terkini dan sebagian data lingkungan menggunakan Open-Meteo.
