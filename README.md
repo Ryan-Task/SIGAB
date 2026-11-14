@@ -1,5 +1,6 @@
 # SIGAB
 
+
 ## Identitas Tim
 
 **Nama tim:** Awikwok
@@ -36,7 +37,9 @@
 - Informasi sumber data dan kelengkapan komponen risiko.
 - Pencarian kandidat sumber data lingkungan dengan Gemini.
 - Sinkronisasi data otomatis melalui worker Python.
-- Autentikasi pengguna, autentikasi admin, dan notifikasi push.
+- Autentikasi pengguna dan autentikasi admin.
+- Peringatan wilayah dan notifikasi push otomatis untuk hujan, prakiraan hujan,
+  serta risiko banjir tinggi pada daerah pantauan.
 
 ## Teknologi yang Digunakan
 
@@ -122,7 +125,17 @@ Alur data utama:
 - Python 3.11 atau lebih baru
 - Akses internet untuk mengambil data dari layanan eksternal
 
-## Instalasi dan Konfigurasi
+## Instalasi dan Konfigurasi (UNTUK JALANKAN WEBSITE DI LOKAL)
+
+## Tutorial Menjalankan Website di Lokal
+
+[Tonton tutorial menjalankan SIGAB di YouTube](https://youtu.be/j95hjLN4hB0?si=Rdl6zQsmpTTMQI5)
+
+[![Tutorial menjalankan SIGAB di lokal](https://img.youtube.com/vi/j95hjLN4hB0/maxresdefault.jpg)](https://youtu.be/j95hjLN4hB0?si=Rdl6zQsmpTTMQI5)
+
+Klik gambar video untuk membukanya di YouTube. GitHub tidak menjalankan video
+YouTube secara langsung di dalam README, sehingga gambar tersebut digunakan
+sebagai thumbnail yang dapat diklik.
 
 ### 1. Clone repository
 
@@ -237,6 +250,11 @@ python -m sigab_data.sync
 Worker berjalan secara berkelanjutan, mengambil data sesuai cakupan dan
 interval sinkronisasi, lalu mengirimkan hasilnya ke Laravel. Tekan `Ctrl+C`
 untuk menghentikannya.
+
+> **Penting pada instalasi pertama:** tunggu sampai worker menampilkan pesan
+> bahwa sinkronisasi selesai sebelum menguji halaman peringatan, peta risiko,
+> grafik, atau detail wilayah. Batch yang belum berhasil akan dicoba kembali
+> pada interval berikutnya.
 
 ## Import Histori Banjir
 
