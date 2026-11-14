@@ -156,7 +156,7 @@ npm install
 Buka terminal baru, kemudian jalankan:
 
 ```powershell
-cd "D:\LombaUnesa2\SIGAB\backend"
+cd backend
 composer install
 Copy-Item .env.example .env
 ```
@@ -206,7 +206,7 @@ relevan.
 
 ### 5. MIGRATE DAN DB SEED SETELAHB ATUR ENV
 ```powershell
-cd "D:\LombaUnesa2\SIGAB\backend"
+cd backend
 php artisan migrate --seed
 ```
 Perintah `migrate --seed` membuat atau memperbarui struktur database dan
@@ -221,7 +221,7 @@ Jalankan aplikasi menggunakan empat terminal terpisah.
 ### Terminal 1 — Frontend Next.js
 
 ```powershell
-cd "D:\LombaUnesa2\SIGAB\frontend"
+cd frontend
 npm run dev
 ```
 
@@ -230,7 +230,7 @@ Frontend tersedia pada `http://127.0.0.1:3000`.
 ### Terminal 2 — Backend Laravel
 
 ```powershell
-cd "D:\LombaUnesa2\SIGAB\backend"
+cd backend
 php artisan serve
 ```
 
@@ -248,7 +248,7 @@ FastAPI tersedia pada `http://127.0.0.1:8001`.
 ### Terminal 4 — Worker sinkronisasi Python
 
 ```powershell
-cd "D:\LombaUnesa2\SIGAB\backend\python"
+cd backend\python
 python -m sigab_data.sync
 ```
 
@@ -273,7 +273,7 @@ File harus memiliki kolom `event_id`, `event_date`, `location`, dan
 `source_url`. Import manual dapat dijalankan dengan:
 
 ```powershell
-cd "D:\LombaUnesa2\SIGAB\backend"
+cd backend
 php artisan history:import-detailed
 ```
 
