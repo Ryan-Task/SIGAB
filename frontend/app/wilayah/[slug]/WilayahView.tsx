@@ -183,18 +183,59 @@ export default function WilayahView({ wilayah, initial }: Props) {
     if (record.rainfall_mm === null) return "Data belum tersedia";
     return `${record.rainfall_mm} mm`;
   };
+  const weatherIcon = (type: "rain" | "fog" | "cloud" | "partly-cloudy" | "sun") => {
+    if (type === "sun") {
+      return (
+        <svg aria-label="Cerah" className="mx-auto h-16 w-16 text-[#f3b84b]" viewBox="0 0 64 64" fill="none" role="img">
+          <circle cx="32" cy="32" r="12" fill="currentColor" />
+          <path d="M32 6v8M32 50v8M6 32h8M50 32h8M13.6 13.6l5.7 5.7M44.7 44.7l5.7 5.7M50.4 13.6l-5.7 5.7M19.3 44.7l-5.7 5.7" stroke="currentColor" strokeWidth="4" strokeLinecap="round" />
+        </svg>
+      );
+    }
+    if (type === "fog") {
+      return (
+        <svg aria-label="Berkabut" className="mx-auto h-16 w-16 text-[#7893a8]" viewBox="0 0 64 64" fill="none" role="img">
+          <path d="M17 29h30a11 11 0 0 0-21-5 10 10 0 0 0-9 5Z" fill="currentColor" opacity=".8" />
+          <path d="M10 39h44M16 47h32" stroke="currentColor" strokeWidth="4" strokeLinecap="round" />
+        </svg>
+      );
+    }
+    if (type === "partly-cloudy") {
+      return (
+        <svg aria-label="Cerah berawan" className="mx-auto h-16 w-16" viewBox="0 0 64 64" fill="none" role="img">
+          <circle cx="23" cy="24" r="10" fill="#f3b84b" />
+          <path d="M22 8v5M22 35v5M6 24h5M33 24h5M11 13l4 4M29 31l4 4M33 13l-4 4M15 31l-4 4" stroke="#f3b84b" strokeWidth="3" strokeLinecap="round" />
+          <path d="M18 45h31a9 9 0 0 0-5-16 13 13 0 0 0-24 4 7 7 0 0 0-2 12Z" fill="#7893a8" />
+          <path d="M21 45h28a9 9 0 0 0-5 4H21a7 7 0 0 1 0-4Z" fill="#b5c7d2" />
+        </svg>
+      );
+    }
+    return (
+      <svg aria-label={type === "rain" ? "Hujan" : "Berawan"} className="mx-auto h-16 w-16" viewBox="0 0 64 64" fill="none" role="img">
+        <path d="M14 37h35a10 10 0 0 0-8-16 15 15 0 0 0-28 4 9 9 0 0 0 1 12Z" fill="#7893a8" />
+        {type === "rain" ? (
+          <path d="m23 45-3 7m13-7-3 7m13-7-3 7" stroke="#26669a" strokeWidth="4" strokeLinecap="round" />
+        ) : (
+          <path d="M20 47h24" stroke="#b5c7d2" strokeWidth="4" strokeLinecap="round" />
+        )}
+      </svg>
+    );
+  };
   const forecastIcon = (record: ApiRainfallRecord) => {
     const condition = forecastCondition(record).toLowerCase();
     if (/hujan|gerimis|shower|rain/.test(condition)) {
-      return <span aria-label="Hujan" className="text-sm font-semibold text-slate-500">Hujan</span>;
+      return weatherIcon("rain");
     }
     if (/kabut|fog/.test(condition)) {
-      return <span aria-label="Berkabut" className="text-sm font-semibold text-slate-500">Berkabut</span>;
+      return weatherIcon("fog");
     }
-    if (/cerah berawan|berawan|cloud/.test(condition)) {
-      return <span aria-label="Berawan" className="text-sm font-semibold text-slate-500">Berawan</span>;
+    if (/cerah berawan|partly cloudy|scattered|broken/.test(condition)) {
+      return weatherIcon("partly-cloudy");
     }
-    return <span aria-label="Cerah" className="text-sm font-semibold text-slate-500">Cerah</span>;
+    if (/berawan|cloud/.test(condition)) {
+      return weatherIcon("cloud");
+    }
+    return weatherIcon("sun");
   };
   const selectedForecast = rainfallForecast[forecastIndex] ?? null;
   const formatEnvironmentalScore = (value: number | null | undefined): string => {
@@ -281,7 +322,7 @@ export default function WilayahView({ wilayah, initial }: Props) {
                       Berikutnya
                     </button>
                   </div>
-                  <div className="mt-3">{forecastIcon(selectedForecast)}</div>
+                  <div className="mx-auto mt-3 w-fit rounded-[24px] bg-[#dfeaf0]/60 px-5 py-2">{forecastIcon(selectedForecast)}</div>
                   <p className="mt-2 text-sm font-medium text-slate-700">{forecastCondition(selectedForecast)}</p>
                   <p className="mt-1 text-sm text-slate-500">{forecastAmount(selectedForecast)}, {selectedForecast.rainfall_probability == null ? "peluang belum tersedia" : `peluang ${selectedForecast.rainfall_probability}%`}</p>
                   <p className="mt-3 text-xs text-slate-400">Geser untuk melihat waktu berikutnya</p>
