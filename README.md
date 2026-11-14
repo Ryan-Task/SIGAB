@@ -19,12 +19,21 @@
 - **Deskripsi:** SIGAB menyajikan informasi geografis untuk membantu pemantauan
   cuaca, curah hujan, histori banjir, kondisi lingkungan, dan estimasi risiko
   banjir hingga tingkat kelurahan/desa.
-- **Solusi:** SIGAB menggabungkan data cuaca, curah hujan, histori banjir,
-  lingkungan, dan peta dalam satu dashboard untuk membantu pengguna memantau
-  kondisi wilayah serta mengambil langkah kesiapsiagaan lebih awal.
-- **Masalah yang diangkat:** Informasi risiko banjir berasal dari berbagai
-  sumber dan belum tersaji dalam satu tampilan yang mudah dipahami pada tingkat
-  wilayah yang terperinci.
+- **Solusi:** SIGAB menyediakan sistem pemantauan dan peringatan dini banjir
+  berbasis wilayah. Sistem menggabungkan prakiraan cuaca BMKG, kondisi cuaca
+  terkini, curah hujan, histori kejadian banjir, faktor lingkungan, kualitas
+  drainase, serta peta risiko untuk menghitung dan menampilkan skor risiko
+  hingga tingkat kelurahan/desa. Pengguna dapat menyimpan daerah pantauan dan
+  menerima notifikasi otomatis ketika terdeteksi hujan, terdapat prakiraan
+  hujan, atau skor risiko banjir berada pada tingkat tinggi. Informasi tersebut
+  membantu masyarakat memantau perubahan kondisi, mempersiapkan kebutuhan
+  darurat, mengamankan barang, menghindari jalur rawan, dan menentukan langkah
+  evakuasi lebih awal berdasarkan informasi yang tersedia.
+- **Masalah yang diangkat:** Banjir sering terjadi di Indonesia, tetapi belum
+  banyak tersedia aplikasi atau sistem yang dapat memberikan peringatan dini
+  dan pemberitahuan sebelum banjir terjadi. Akibatnya, masyarakat sering tidak
+  memiliki cukup waktu untuk mempersiapkan diri, mengamankan barang, atau
+  menentukan langkah evakuasi.
 - **Target pengguna:** Masyarakat, relawan, pengelola data, serta instansi
   yang memerlukan informasi pendukung untuk kesiapsiagaan banjir.
 
@@ -154,7 +163,7 @@ cd frontend
 npm install
 ```
 
-### 3. Instalasi backend Laravel
+### 3. Instalasi backend Laravel dan dependency Python
 
 Buka terminal baru, kemudian jalankan:
 
@@ -162,8 +171,9 @@ Buka terminal baru, kemudian jalankan:
 cd backend
 composer install
 Copy-Item .env.example .env
+php artisan key:generate
+python -m pip install -r python\requirements-api.txt
 ```
-
 
 ### 4. Konfigurasi environment
 
@@ -174,6 +184,11 @@ Variabel yang perlu disiapkan:
 
 ```dotenv
 DB_CONNECTION=mysql
+DB_HOST=127.0.0.1
+DB_PORT=3306
+DB_DATABASE=sigab
+DB_USERNAME=root
+DB_PASSWORD=
 MAIL_MAILER=smtp
 MAIL_HOST=smtp.gmail.com
 MAIL_PORT=587
@@ -207,11 +222,23 @@ Frontend secara default mengakses Laravel melalui
 `API_ORIGIN` pada konfigurasi frontend atau konfigurasi proxy Next.js yang
 relevan.
 
-### 5. MIGRATE DAN DB SEED SETELAHB ATUR ENV
+Sebelum migrasi, buat database MySQL bernama `sigab` dan pastikan service
+MySQL sedang berjalan:
+
+```sql
+CREATE DATABASE sigab CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+```
+
+Sesuaikan `DB_USERNAME`, `DB_PASSWORD`, dan `DB_PORT` jika konfigurasi MySQL
+lokal berbeda.
+
+### 5. Migrasi dan database seed
+
 ```powershell
 cd backend
 php artisan migrate --seed
 ```
+
 Perintah `migrate --seed` membuat atau memperbarui struktur database dan
 menjalankan seeder aplikasi. Seeder saat ini membuat akun administrator demo.
 Jika database sudah pernah digunakan, tinjau migrasi sebelum menjalankan
@@ -263,6 +290,20 @@ untuk menghentikannya.
 > bahwa sinkronisasi selesai sebelum menguji halaman peringatan, peta risiko,
 > grafik, atau detail wilayah. Batch yang belum berhasil akan dicoba kembali
 > pada interval berikutnya.
+
+### Terminal 5 (opsional tetapi wajib jika production/deploy) — Scheduler notifikasi otomatis
+
+Terminal tambahan ini diperlukan jika ingin menguji pengiriman peringatan
+otomatis berdasarkan hujan dan skor risiko, bukan hanya simulasi melalui
+`push:test`:
+
+```powershell
+cd backend
+php artisan schedule:work
+```
+
+Scheduler menjalankan `alerts:send-area` sesuai jadwal aplikasi. Untuk demo
+notifikasi simulasi pada bagian berikutnya, Terminal 5 tidak wajib.
 
 ## Import Histori Banjir
 
