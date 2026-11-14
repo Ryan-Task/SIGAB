@@ -384,7 +384,7 @@ function buildDetail(p: ApiPrediction): string {
         </div>
       </section>
 
-      <section className="px-6 pb-16">
+      <section className="px-6 pb-16 pt-8">
         <div className="mx-auto grid max-w-[1180px] gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {visibleRegions.map((r) => {
             const activeRegion = r.key === regionKey;
