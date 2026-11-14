@@ -17,7 +17,7 @@ class ApiTokenAuth
             ->where('expires_at', '>', now())
             ->value('user_id') : null;
         $user = $userId ? User::find($userId) : null;
-        if (!$user) {
+        if (!$user || $user->is_blocked) {
             return response()->json(['message' => 'Unauthenticated.'], 401);
         }
         $request->setUserResolver(fn () => $user);

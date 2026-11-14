@@ -8,9 +8,12 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 
 class AuthController
@@ -101,6 +104,9 @@ class AuthController
         if (!$user) {
             return response()->json(['message' => 'Akun belum terdaftar. Silakan pilih Register.'], 404);
         }
+        if ($user->is_blocked) {
+            return response()->json(['message' => 'Akun ini telah diblokir administrator.'], 403);
+        }
         if ($user->two_factor_enabled) {
             return response()->json(['requires_verification' => true]);
         }
@@ -114,7 +120,9 @@ class AuthController
             'password' => ['required', 'string'],
         ]);
         $user = User::where('email', Str::lower(trim($validated['email'])))
-            ->where('is_admin', true)->first();
+            ->where('is_admin', true)
+            ->where('is_blocked', false)
+            ->first();
         if (!$user || !Hash::check($validated['password'], $user->password)) {
             return response()->json(['message' => 'Email atau password admin tidak valid.'], 401);
         }
@@ -124,7 +132,7 @@ class AuthController
 
     public function adminDashboard(Request $request): JsonResponse
     {
-        abort_unless($request->user()->is_admin, 403, 'Akses admin diperlukan.');
+        $this->ensureAdmin($request);
 
         return response()->json(['data' => [
             'users' => DB::table('users')->count(),
@@ -135,6 +143,108 @@ class AuthController
         ]]);
     }
 
+    public function adminUsers(Request $request): JsonResponse
+    {
+        $this->ensureAdmin($request);
+
+        return response()->json(['data' => User::query()
+            ->select(['id', 'name', 'email', 'is_admin', 'is_blocked', 'created_at'])
+            ->latest('created_at')
+            ->get()]);
+    }
+
+    public function createAdminUser(Request $request): JsonResponse
+    {
+        $this->ensureAdmin($request);
+        $validated = $request->validate([
+            'name' => ['required', 'string', 'min:2', 'max:255'],
+            'email' => ['required', 'email', 'max:255', 'unique:users,email'],
+            'password' => ['required', 'string', 'min:8', 'confirmed'],
+        ]);
+
+        $user = User::create([
+            'name' => trim($validated['name']),
+            'email' => Str::lower(trim($validated['email'])),
+            'password' => $validated['password'],
+            'is_admin' => true,
+            'is_blocked' => false,
+            'two_factor_enabled' => false,
+            'email_verified_at' => now(),
+        ]);
+
+        return response()->json(['data' => [
+            'id' => $user->id,
+            'name' => $user->name,
+            'email' => $user->email,
+            'is_admin' => true,
+            'is_blocked' => false,
+            'created_at' => $user->created_at,
+        ]], 201);
+    }
+
+    public function blockUser(Request $request, int $userId): JsonResponse
+    {
+        $this->ensureAdmin($request);
+        $validated = $request->validate(['blocked' => ['required', 'boolean']]);
+        $user = User::findOrFail($userId);
+        abort_if($user->is_admin, 422, 'Akun administrator tidak dapat diblokir.');
+        $user->is_blocked = $validated['blocked'];
+        $user->save();
+        if ($user->is_blocked) {
+            DB::table('auth_tokens')->where('user_id', $user->id)->delete();
+        }
+
+        return response()->json(['data' => [
+            'id' => $user->id,
+            'is_blocked' => $user->is_blocked,
+        ]]);
+    }
+
+    public function deleteUser(Request $request, int $userId): JsonResponse
+    {
+        $this->ensureAdmin($request);
+        $user = User::findOrFail($userId);
+        abort_if($user->is_admin, 422, 'Akun administrator tidak dapat dihapus.');
+
+        DB::table('auth_tokens')->where('user_id', $user->id)->delete();
+        DB::table('user_locations')->where('user_id', $user->id)->delete();
+        DB::table('push_subscriptions')->where('user_id', $user->id)->delete();
+        DB::table('auth_otps')->where('email', $user->email)->delete();
+        $user->delete();
+
+        return response()->json(['message' => 'Akun pengguna berhasil dihapus.']);
+    }
+
+    public function importAdminHistory(Request $request): JsonResponse
+    {
+        $this->ensureAdmin($request);
+        $validated = $request->validate([
+            'file' => ['required', 'file', 'mimes:csv,txt', 'max:10240'],
+        ]);
+
+        $filename = 'bpbd-banjir-histori.csv';
+        $path = $validated['file']->storeAs('private', $filename);
+        if ($path === false) {
+            abort(500, 'File CSV tidak dapat disimpan.');
+        }
+
+        try {
+            $exitCode = Artisan::call('history:import-detailed', [
+                'path' => Storage::disk('local')->path($path),
+            ]);
+            $output = trim(Artisan::output());
+            if ($exitCode !== 0) {
+                return response()->json(['message' => $output ?: 'Import CSV riwayat gagal.'], 422);
+            }
+
+            return response()->json([
+                'message' => $output ?: 'CSV riwayat berhasil diimpor.',
+            ]);
+        } finally {
+            Storage::disk('local')->delete($path);
+        }
+    }
+
     public function googleRedirect(Request $request): RedirectResponse
     {
         $clientId = config('services.google.client_id');
@@ -143,6 +253,9 @@ class AuthController
             abort(503, 'Google login belum dikonfigurasi.');
         }
 
+        $statePayload = ($request->boolean('remember') ? '1' : '0') . '|' . Str::random(40);
+        $state = base64_encode($statePayload . '|' . hash_hmac('sha256', $statePayload, config('app.key')));
+
         $query = http_build_query([
             'client_id' => $clientId,
             'redirect_uri' => $redirectUri,
@@ -150,13 +263,28 @@ class AuthController
             'scope' => 'openid email profile',
             'access_type' => 'online',
             'prompt' => 'select_account',
-            'state' => $request->boolean('remember') ? 'remember' : 'session',
+            'state' => $state,
         ]);
         return redirect('https://accounts.google.com/o/oauth2/v2/auth?' . $query);
     }
 
     public function googleCallback(Request $request): RedirectResponse
     {
+        $stateParts = explode('|', base64_decode($request->string('state')->toString(), true) ?: '');
+        $stateRemember = $stateParts[0] ?? '';
+        $stateNonce = $stateParts[1] ?? '';
+        $stateSignature = $stateParts[2] ?? '';
+        $statePayload = $stateRemember . '|' . $stateNonce;
+        if (
+            !in_array($stateRemember, ['0', '1'], true)
+            || $stateNonce === ''
+            || $stateSignature === ''
+            || !hash_equals(hash_hmac('sha256', $statePayload, config('app.key')), $stateSignature)
+        ) {
+            Log::warning('Google OAuth callback rejected because its state was invalid.');
+            return redirect($this->frontendUrl('/login?error=Permintaan+Google+kedaluwarsa%2C+silakan+coba+lagi'));
+        }
+
         $code = $request->string('code')->toString();
         if ($code === '') {
             return redirect($this->frontendUrl('/login?error=Google+login+dibatalkan'));
@@ -170,6 +298,11 @@ class AuthController
             'grant_type' => 'authorization_code',
         ]);
         if (!$tokenResponse->successful()) {
+            Log::warning('Google OAuth token exchange failed.', [
+                'status' => $tokenResponse->status(),
+                'error' => $tokenResponse->json('error'),
+                'description' => $tokenResponse->json('error_description'),
+            ]);
             return redirect($this->frontendUrl('/login?error=Google+login+gagal'));
         }
 
@@ -181,6 +314,9 @@ class AuthController
         }
 
         $user = User::firstOrNew(['email' => Str::lower($profile['email'])]);
+        if ($user->exists && $user->is_blocked) {
+            return redirect($this->frontendUrl('/login?error=Akun+Google+ini+telah+diblokir+administrator'));
+        }
         $isNewUser = !$user->exists;
         if ($isNewUser || blank($user->name)) {
             $user->name = $profile['name'] ?? Str::before($user->email, '@');
@@ -191,7 +327,7 @@ class AuthController
         $user->save();
 
         $token = $this->issueToken($user);
-        $remember = $request->string('state')->toString() === 'remember';
+        $remember = $stateRemember === '1';
         return redirect($this->frontendUrl('/login?token=' . urlencode($token) . '&remember=' . ($remember ? '1' : '0')));
     }
 
@@ -360,6 +496,11 @@ class AuthController
     private function userPayload(User $user): array
     {
         return ['user' => $this->userDetails($user), 'token' => $this->issueToken($user)];
+    }
+
+    private function ensureAdmin(Request $request): void
+    {
+        abort_unless($request->user()->is_admin, 403, 'Akses admin diperlukan.');
     }
 
     private function userDetails(User $user): array

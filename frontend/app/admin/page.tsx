@@ -3,34 +3,19 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import AdminNav from "./AdminNav";
-import {
-  getAdminDashboard,
-  getCurrentUser,
-  requestPasswordChangeCode,
-  updatePassword,
-  updateProfile,
-  type AdminDashboard,
-  type AuthUser,
-} from "../../lib/api";
+import { getAdminDashboard, getCurrentUser, type AdminDashboard } from "../../lib/api";
 
-const cards: Array<{ key: keyof AdminDashboard; label: string }> = [
-  { key: "users", label: "Pengguna" },
-  { key: "areas", label: "Wilayah aktif" },
-  { key: "saved_locations", label: "Daerah pantauan" },
-  { key: "push_subscriptions", label: "Subscription notifikasi" },
-  { key: "risk_predictions", label: "Data skor risiko banjir" },
+const cards: Array<{ key: keyof AdminDashboard; label: string; detail: string; accent: string }> = [
+  { key: "users", label: "Pengguna terdaftar", detail: "Akun yang tersimpan di SIGAB", accent: "bg-[#dfeaf0]" },
+  { key: "areas", label: "Wilayah aktif", detail: "Wilayah yang tersedia untuk dipantau", accent: "bg-[#dff2ed]" },
+  { key: "saved_locations", label: "Daerah pantauan", detail: "Lokasi yang disimpan pengguna", accent: "bg-[#fff0e8]" },
+  { key: "push_subscriptions", label: "Notifikasi aktif", detail: "Subscription Web Push tersimpan", accent: "bg-[#ece8f8]" },
+  { key: "risk_predictions", label: "Data risiko banjir", detail: "Prediksi yang tersedia di sistem", accent: "bg-[#e6f0f8]" },
 ];
 
 export default function AdminPage() {
   const [data, setData] = useState<AdminDashboard | null>(null);
-  const [user, setUser] = useState<AuthUser | null>(null);
-  const [name, setName] = useState("");
-  const [passwordStep, setPasswordStep] = useState<"idle" | "code">("idle");
-  const [passwordCode, setPasswordCode] = useState("");
-  const [newPassword, setNewPassword] = useState("");
-  const [passwordConfirmation, setPasswordConfirmation] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState("Memuat dashboard admin...");
+  const [message, setMessage] = useState("Memuat ringkasan dashboard...");
 
   useEffect(() => {
     getCurrentUser().then((user) => {
@@ -38,109 +23,60 @@ export default function AdminPage() {
         window.location.replace("/");
         return;
       }
-      setUser(user);
-      setName(user.name);
-      getAdminDashboard().then(setData).catch(() => setMessage("Data dashboard admin belum dapat dimuat."));
+      getAdminDashboard().then(setData).catch(() => setMessage("Data dashboard belum dapat dimuat."));
     });
   }, []);
-
-  async function saveName(event: React.FormEvent) {
-    event.preventDefault();
-    setBusy(true);
-    try {
-      const updated = await updateProfile(name);
-      setUser(updated);
-      setName(updated.name);
-      setMessage("Profil administrator diperbarui.");
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Profil belum dapat diperbarui.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function sendPasswordCode() {
-    setBusy(true);
-    try {
-      await requestPasswordChangeCode();
-      setPasswordStep("code");
-      setMessage("Kode OTP perubahan password dikirim ke email administrator.");
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Kode OTP belum dapat dikirim.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function savePassword(event: React.FormEvent) {
-    event.preventDefault();
-    setBusy(true);
-    try {
-      await updatePassword(passwordCode, newPassword, passwordConfirmation);
-      setPasswordStep("idle");
-      setPasswordCode("");
-      setNewPassword("");
-      setPasswordConfirmation("");
-      setMessage("Password administrator berhasil diperbarui.");
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Password belum dapat diperbarui.");
-    } finally {
-      setBusy(false);
-    }
-  }
 
   return (
     <main className="min-h-screen bg-[#dfeaf0] text-slate-800">
       <AdminNav />
-      <section className="mx-auto min-h-screen max-w-6xl px-6 pb-24 pt-32">
-        <div className="rounded-[32px] bg-[#123d61] p-8 text-white shadow-[0_24px_60px_rgba(18,61,97,0.2)] sm:p-10">
-          <p className="text-xs font-bold uppercase tracking-[0.2em] text-[#82d4d0]">Administrasi SIGAB</p>
-          <h1 className="mt-3 text-5xl font-semibold tracking-[-0.07em]">Dashboard Admin</h1>
-          <p className="mt-4 max-w-xl text-sm leading-7 text-sky-100/75">Ringkasan data pengguna, wilayah, notifikasi, dan skor risiko banjir dari database SIGAB.</p>
-        </div>
-        {data ? (
-          <div className="mt-8 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
-            {cards.map((card) => (
-              <article key={card.key} className="rounded-[28px] border border-[#26669a]/10 bg-white p-7 shadow-[0_18px_40px_rgba(38,102,154,0.1)]">
-                <p className="text-xs font-bold uppercase tracking-[0.16em] text-[#26669a]">{card.label}</p>
-                <p className="mt-4 text-5xl font-semibold text-[#123d61]">{data[card.key]}</p>
-              </article>
-            ))}
-          </div>
-        ) : <p className="mt-8 rounded-2xl bg-white p-5 text-sm text-slate-600">{message}</p>}
-        {user && (
-          <section className="mt-8 rounded-[32px] bg-[#f0e7e2] p-8 shadow-[0_18px_40px_rgba(38,102,154,0.08)]">
-            <p className="text-xs font-bold uppercase tracking-[0.18em] text-[#f38a50]">Profil administrator</p>
-            <h2 className="mt-2 text-3xl font-semibold tracking-[-0.05em] text-[#123d61]">Pengaturan akun</h2>
-            <p className="mt-2 text-sm text-slate-600">{user.email}</p>
-            <form onSubmit={saveName} className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-end">
-              <label className="flex-1">
-                <span className="text-xs font-bold uppercase tracking-[0.14em] text-[#26669a]">Nama administrator</span>
-                <input required minLength={2} value={name} onChange={(event) => setName(event.target.value)} className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-[#123d61] outline-none focus:border-[#26669a]" />
-              </label>
-              <button disabled={busy} className="rounded-full bg-[#26669a] px-5 py-3 text-sm font-bold text-white disabled:opacity-50">Simpan nama</button>
-            </form>
-            <div className="mt-8 border-t border-[#123d61]/10 pt-6">
-              <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
-                <div>
-                  <p className="font-semibold text-[#123d61]">Ubah password administrator</p>
-                  <p className="mt-1 text-sm text-slate-600">Verifikasi dilakukan dengan kode OTP melalui email.</p>
-                </div>
-                {passwordStep === "idle" && <button type="button" disabled={busy} onClick={() => void sendPasswordCode()} className="rounded-full border border-[#26669a] px-4 py-2 text-sm font-bold text-[#26669a] disabled:opacity-50">Kirim OTP</button>}
-              </div>
-              {passwordStep === "code" && (
-                <form onSubmit={savePassword} className="mt-4 grid gap-3 sm:grid-cols-2">
-                  <input required inputMode="numeric" pattern="[0-9]{6}" maxLength={6} value={passwordCode} onChange={(event) => setPasswordCode(event.target.value)} placeholder="Kode OTP 6 digit" className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none focus:border-[#26669a] sm:col-span-2" />
-                  <input required minLength={8} type="password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} placeholder="Password baru" className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none focus:border-[#26669a]" />
-                  <input required minLength={8} type="password" value={passwordConfirmation} onChange={(event) => setPasswordConfirmation(event.target.value)} placeholder="Ulangi password baru" className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none focus:border-[#26669a]" />
-                  <button disabled={busy} className="rounded-full bg-[#f38a50] px-5 py-3 text-sm font-bold text-[#123d61] disabled:opacity-50 sm:col-span-2">Simpan password baru</button>
-                </form>
-              )}
+      <section className="mx-auto min-h-screen max-w-6xl px-5 pb-24 pt-32 sm:px-6">
+        <div className="relative overflow-hidden rounded-[32px] bg-[#123d61] p-8 text-white shadow-[0_24px_60px_rgba(18,61,97,0.2)] sm:p-11">
+          <div className="absolute -right-20 -top-28 h-72 w-72 rounded-full border-[42px] border-[#82d4d0]/20" />
+          <div className="absolute -bottom-36 left-1/3 h-72 w-72 rounded-full border-[42px] border-[#f38a50]/20" />
+          <div className="relative">
+            <p className="text-xs font-bold uppercase tracking-[0.22em] text-[#82d4d0]">Pusat informasi SIGAB</p>
+            <h1 className="mt-4 max-w-2xl text-4xl font-semibold tracking-[-0.07em] sm:text-6xl">Pantau sistem dengan lebih jelas.</h1>
+            <p className="mt-5 max-w-2xl text-sm leading-7 text-sky-100/75">
+              Ringkasan pengguna, wilayah, notifikasi, dan data skor risiko banjir yang tersimpan di database SIGAB.
+            </p>
+            <div className="mt-8 flex flex-wrap gap-3 text-xs font-bold">
+              <Link href="/admin/riwayat" className="rounded-full bg-[#82d4d0] px-5 py-3 text-[#123d61] transition hover:bg-white">Lihat riwayat</Link>
+              <Link href="/admin/akun" className="rounded-full border border-white/25 px-5 py-3 text-white transition hover:border-[#82d4d0] hover:bg-white/10">Atur akun</Link>
             </div>
-            {message && <p className="mt-5 rounded-xl bg-white/70 px-4 py-3 text-sm text-[#26669a]">{message}</p>}
-          </section>
+          </div>
+        </div>
+
+        {data ? (
+          <>
+            <div className="mt-8 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+              {cards.map((card) => (
+                <article key={card.key} className={`rounded-[26px] border border-white/80 ${card.accent} p-6 shadow-[0_16px_34px_rgba(38,102,154,0.09)] transition duration-200 hover:-translate-y-1 hover:shadow-[0_22px_42px_rgba(38,102,154,0.15)]`}>
+                  <div className="flex items-start justify-between gap-4">
+                    <p className="text-xs font-black uppercase tracking-[0.14em] text-[#26669a]">{card.label}</p>
+                    <span className="h-2.5 w-2.5 rounded-full bg-[#f38a50]" />
+                  </div>
+                  <p className="mt-5 text-5xl font-semibold tracking-[-0.06em] text-[#123d61]">{data[card.key]}</p>
+                  <p className="mt-3 text-sm leading-6 text-slate-600">{card.detail}</p>
+                </article>
+              ))}
+            </div>
+            <section className="mt-8 grid gap-5 lg:grid-cols-[1.2fr_0.8fr]">
+              <article className="rounded-[28px] bg-white p-7 shadow-[0_18px_40px_rgba(38,102,154,0.1)]">
+                <p className="text-xs font-black uppercase tracking-[0.16em] text-[#f38a50]">Gambaran sistem</p>
+                <h2 className="mt-2 text-2xl font-semibold tracking-[-0.05em] text-[#123d61]">Semua data utama dalam satu tampilan</h2>
+                <p className="mt-3 text-sm leading-7 text-slate-600">Gunakan menu Atur akun untuk mengelola profil administrator, dan Riwayat untuk melihat ringkasan data yang tersimpan.</p>
+              </article>
+              <article className="rounded-[28px] bg-[#f0e7e2] p-7 shadow-[0_18px_40px_rgba(38,102,154,0.08)]">
+                <p className="text-xs font-black uppercase tracking-[0.16em] text-[#26669a]">Status layanan</p>
+                <p className="mt-3 text-2xl font-semibold text-[#123d61]">Sistem aktif</p>
+                <p className="mt-2 text-sm leading-6 text-slate-600">Dashboard terhubung ke database SIGAB.</p>
+              </article>
+            </section>
+          </>
+        ) : (
+          <p className="mt-8 rounded-2xl bg-white p-5 text-sm text-slate-600">{message}</p>
         )}
-        <Link href="/" className="mt-10 inline-flex rounded-full bg-[#26669a] px-5 py-3 text-sm font-bold text-white">Kembali ke beranda</Link>
       </section>
     </main>
   );

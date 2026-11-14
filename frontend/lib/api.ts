@@ -296,9 +296,55 @@ export type AdminDashboard = {
   risk_predictions: number;
 };
 
+export type AdminUser = {
+  id: number;
+  name: string;
+  email: string;
+  is_admin: boolean;
+  is_blocked: boolean;
+  created_at: string;
+};
+
 export async function getAdminDashboard(): Promise<AdminDashboard> {
   const response = await getJson<{ data: AdminDashboard }>("/admin/dashboard", { headers: authHeaders() });
   return response.data;
+}
+
+export async function getAdminUsers(): Promise<AdminUser[]> {
+  const response = await getJson<{ data: AdminUser[] }>("/admin/users", { headers: authHeaders() });
+  return response.data;
+}
+
+export async function createAdminUser(name: string, email: string, password: string, passwordConfirmation: string): Promise<AdminUser> {
+  const response = await getJson<{ data: AdminUser }>("/admin/users/admin", {
+    method: "POST",
+    headers: { ...authHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ name, email, password, password_confirmation: passwordConfirmation }),
+  });
+  return response.data;
+}
+
+export async function setAdminUserBlocked(userId: number, blocked: boolean): Promise<void> {
+  await getJson(`/admin/users/${userId}/block`, {
+    method: "PATCH",
+    headers: { ...authHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ blocked }),
+  });
+}
+
+export async function deleteAdminUser(userId: number): Promise<void> {
+  await getJson(`/admin/users/${userId}`, { method: "DELETE", headers: authHeaders() });
+}
+
+export async function importAdminHistory(file: File): Promise<string> {
+  const body = new FormData();
+  body.append("file", file);
+  const response = await getJson<{ message: string }>("/admin/history/import", {
+    method: "POST",
+    headers: authHeaders(),
+    body,
+  });
+  return response.message;
 }
 
 export async function verifyLoginCode(email: string, code: string, name?: string, remember = false): Promise<AuthUser> {

@@ -28,6 +28,11 @@ Route::middleware('auth.token')->group(function (): void {
     Route::post('/auth/push/subscribe', [AuthController::class, 'subscribePush']);
     Route::delete('/auth/push/subscribe', [AuthController::class, 'unsubscribePush']);
     Route::get('/admin/dashboard', [AuthController::class, 'adminDashboard']);
+    Route::get('/admin/users', [AuthController::class, 'adminUsers']);
+    Route::post('/admin/users/admin', [AuthController::class, 'createAdminUser']);
+    Route::patch('/admin/users/{userId}/block', [AuthController::class, 'blockUser']);
+    Route::delete('/admin/users/{userId}', [AuthController::class, 'deleteUser']);
+    Route::post('/admin/history/import', [AuthController::class, 'importAdminHistory']);
 });
 
 Route::get('/v1/areas', [AreaDataController::class, 'index']);
