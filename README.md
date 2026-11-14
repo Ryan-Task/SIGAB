@@ -239,7 +239,7 @@ Laravel API tersedia pada `http://127.0.0.1:8000`.
 ### Terminal 3 — FastAPI
 
 ```powershell
-cd "D:\LombaUnesa2\SIGAB\backend"
+cd backend
 uvicorn --app-dir python sigab_data.api:app --reload --port 8001
 ```
 
