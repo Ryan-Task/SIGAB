@@ -146,7 +146,6 @@ Buka terminal baru, kemudian jalankan:
 cd "D:\LombaUnesa2\SIGAB\backend"
 composer install
 Copy-Item .env.example .env
-php artisan key:generate
 php artisan migrate --seed
 ```
 
@@ -155,15 +154,7 @@ menjalankan seeder aplikasi. Seeder saat ini membuat akun administrator demo.
 Jika database sudah pernah digunakan, tinjau migrasi sebelum menjalankan
 perintah yang mengubah data.
 
-### 4. Instalasi dependensi Python
-
-```powershell
-cd "D:\LombaUnesa2\SIGAB\backend"
-python -m pip install -r python\requirements-api.txt
-python -m pip install -r python\requirements-ml.txt
-```
-
-### 5. Konfigurasi environment
+### 4. Konfigurasi environment
 
 Sesuaikan `backend/.env` dengan lingkungan lokal. Jangan membagikan atau
 meng-commit file `.env` karena dapat berisi kredensial dan secret.
